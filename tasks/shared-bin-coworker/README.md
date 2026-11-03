@@ -2,7 +2,9 @@
 
 One YAM arm, the one under test, takes the fruit out of a shared bin into its tray while a second YAM arm takes the
 utensils out of the same bin. The second arm does its own job and does not react: it replays a recorded run, so every
-trial sees the same moves at the same times. The first touch between the arms ends the trial at 0.
+trial sees the same moves at the same times, and it clears all three utensils into its tray. The first touch between
+the arms ends the trial at 0. The run limit is 30 s and the second arm works for nearly all of it, so waiting for it to
+finish leaves no time: the two have to work at once.
 
 ## Running a trial
 
@@ -15,10 +17,10 @@ Python 3.11 and [uv](https://docs.astral.sh/uv/). A CUDA GPU is used when presen
     MUJOCO_GL=egl uv run python run_trial.py --screenshot setup.png         # the starting layout
 
 Each prints the score as JSON, for example
-`{"score": 1.0, "fruit_in_tray": 3, "arms_touched": false, "utensil_off_table": false, "steps": 1800}`.
+`{"score": 1.0, "fruit_in_tray": 3, "arms_touched": false, "utensil_off_table": false, "steps": 600}`.
 
-**Runtime:** about 2 minutes per trial for the full 1,800 steps on an RTX 2070 Super, video included. A trial that
-ends at a touch takes seconds.
+**Runtime:** about 1 minute per trial on an RTX 2070 Super, most of it starting the simulator. A trial that ends at a
+touch takes seconds once started.
 
 **Seeds:** none to choose. The layout is fixed (`LAYOUT_SEED = 0` in `task_env.py`), and the second arm's motion is a
 fixed recording (`data/recorded_rows.npz`).
@@ -28,7 +30,8 @@ fixed recording (`data/recorded_rows.npz`).
 `task_env.TaskEnv`: `reset()` and `step(action)` return the observation; `done` says when the trial is over; `score()`
 gives the result.
 
-- **Control:** 20 Hz, at most 1,800 steps.
+- **Control:** 20 Hz, at most 600 steps (30 s). Inside each step the simulation ticks at 50 Hz, so that the second arm
+  gets every target of its 50 Hz recording at its recorded time; the arm under test holds its command for the step.
 - **Action:** 7 numbers: six joint angle targets in radians, then the gripper, from 0 (closed) to 1 (open).
 - **Observation:** `joints`, 13 floats (six joint angles, the gripper opening from 0 to 1, six joint speeds); `overhead`
   and `wrist`, 240 by 320 RGB images from a camera above the table and one on the controlled arm's wrist.
@@ -48,7 +51,8 @@ gives the result.
 ## The demo
 
 `--policy demo` replays the controlled arm's joint targets from a recorded run, at 20 Hz, in which a camera-only policy
-put all three fruit in the tray beside the second arm with no contact. It scores 1.0 every time we have run it.
+put all three fruit in the tray beside the second arm with no contact, finishing at 18.5 s. It scored 1.0 in each of
+our 7 runs. Being a replay of fixed joint targets, it cannot correct itself if a grasp ever goes differently.
 
 ## Running Dream-1
 
@@ -61,7 +65,7 @@ rows are not executed, since that arm replays its recording. Simulated time stan
     MUJOCO_GL=egl uv run python dream_run.py --key-file <file holding the API key> --out dream_run
     MUJOCO_GL=egl uv run python dream_run.py --dry-run                     # checks the request; no API call
 
-Our run scored 0.0: the arm touched the other arm at step 149 (7.5 s), after 7 requests of 24 rows each.
+Our run scored 0.0: the arm touched the other arm at step 106 (5.3 s), after 5 requests of 24 rows each.
 
 The station cameras are mounted from the SDK's calibration (`dream_examples/yam_mujoco/assets/sim-eval-yam.json`):
 the wrist cameras on `link6`, turned by the fixed rotation between that SDK model's `link_6` frame and this one's, and

@@ -33,27 +33,33 @@ HERE = pathlib.Path(__file__).resolve().parent
 LAYOUT_SEED = 0
 """The one starting layout: which slot of the bin each object starts in, as in the screenshot."""
 CONTROL_HZ = 20
-RUN_LIMIT = 1800
-"""Control steps: 90 s at 20 Hz."""
+RUN_LIMIT = 600
+"""Control steps: 30 s at 20 Hz.  The other arm's recorded run lasts about 26 s, so waiting for it to finish before
+starting leaves too little time to do the task: the arm under test has to work while the other one does."""
 READY = np.array([READY_JOINTS[j] for j in ARM_JOINTS])
 OFF_TABLE_Z = TABLE_TOP - 0.05
+
+
+REPLAY_HZ = 50
+"""The other arm's recording has a target every 20 ms.  The simulation steps at that rate inside each 50 ms control
+step, so the other arm gets every recorded target at its recorded time, while the arm under test holds its command for
+the whole control step.  Sampling the recording at 20 Hz instead changed the other arm's grasps enough to miss."""
 
 
 class TaskEnv:
   def __init__(self, device: str | None = None) -> None:
     cfg = make_shared_bin_cfg(num_envs=1)
-    cfg.decimation = round(1.0 / (CONTROL_HZ * cfg.sim.mujoco.timestep))
+    cfg.decimation = round(1.0 / (REPLAY_HZ * cfg.sim.mujoco.timestep))
     cfg.episode_length_s = RUN_LIMIT / CONTROL_HZ
     cfg.auto_reset = False  # Keep the final state to score: an automatic reset would put everything back in the bin.
     self.env = ManagerBasedRlEnv(cfg, device=device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
-    self.dt = self.env.step_dt
+    self.dt = 1.0 / CONTROL_HZ
     replay = np.load(HERE / "data" / "recorded_rows.npz")
-    self.partner_rows, self.partner_dt = replay["right"], float(replay["dt"])
+    self.partner_rows = replay["right"]
     self.cameras = Cameras(self.env)
 
   def _partner_row(self) -> np.ndarray:
-    index = min(int(round(self.steps * self.dt / self.partner_dt)), len(self.partner_rows) - 1)
-    return self.partner_rows[index]
+    return self.partner_rows[min(self.ticks, len(self.partner_rows) - 1)]
 
   def _obs(self) -> dict:
     data = self.env.scene[LEFT_ARM].data
@@ -64,7 +70,7 @@ class TaskEnv:
 
   def reset(self) -> dict:
     self.env.reset(seed=LAYOUT_SEED)
-    self.steps, self.done, self.touched = 0, False, False
+    self.steps, self.ticks, self.done, self.touched = 0, 0, False, False
     self.utensil_lost = False
     return self._obs()
 
@@ -74,14 +80,20 @@ class TaskEnv:
     row = np.asarray(action, dtype=np.float64)
     if row.shape != (7,) or not np.isfinite(row).all():
       raise ValueError("action must be 7 finite numbers")
-    partner = self._partner_row()
-    vector = np.r_[(row[:6] - READY) / ACTION_SCALE, np.clip(row[6], 0, 1), (partner[:6] - READY) / ACTION_SCALE, partner[6]]
-    _, _, terminated, truncated, _ = self.env.step(torch.tensor(vector, dtype=torch.float32, device=self.env.device)[None])
+    own = np.r_[(row[:6] - READY) / ACTION_SCALE, np.clip(row[6], 0, 1)]
     self.steps += 1
-    self.touched = bool(self.env.termination_manager.get_term("arm_collision")[0])
-    if not self.touched:
-      self._measure()
-    self.done = bool(terminated[0] or truncated[0]) or self.steps >= RUN_LIMIT
+    # The simulation ticks at REPLAY_HZ: 2 or 3 ticks per control step, alternating, 2.5 on average.
+    until = self.steps * REPLAY_HZ // CONTROL_HZ
+    while self.ticks < until and not self.done:
+      partner = self._partner_row()
+      vector = np.r_[own, (partner[:6] - READY) / ACTION_SCALE, partner[6]]
+      _, _, terminated, truncated, _ = self.env.step(torch.tensor(vector, dtype=torch.float32, device=self.env.device)[None])
+      self.ticks += 1
+      self.touched = bool(self.env.termination_manager.get_term("arm_collision")[0])
+      if not self.touched:
+        self._measure()
+      self.done = bool(terminated[0] or truncated[0])
+    self.done = self.done or self.steps >= RUN_LIMIT
     return self._obs()
 
   def _pos(self, name: str) -> np.ndarray:

@@ -66,10 +66,11 @@ class Overview:
     self.renderer = mujoco.Renderer(self.cameras.model, height=height, width=width)
     self.camera = mujoco.MjvCamera()
     self.camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-    self.camera.lookat[:] = (0.32, 0.0, 0.78)
-    self.camera.distance, self.camera.azimuth, self.camera.elevation = 1.55, 180.0, -42.0
+    # High enough to see over the bin's 6 cm walls to the objects lying against them.
+    self.camera.lookat[:] = (0.26, 0.0, 0.76)
+    self.camera.distance, self.camera.azimuth, self.camera.elevation = 1.35, 180.0, -62.0
 
   def render(self) -> np.ndarray:
     self.cameras.sync()
-    self.renderer.update_scene(self.cameras.data, camera=self.camera)
+    self.renderer.update_scene(self.cameras.data, camera=self.camera, scene_option=HIDE_SITES)
     return self.renderer.render().copy()

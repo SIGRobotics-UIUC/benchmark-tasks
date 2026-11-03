@@ -1,9 +1,8 @@
-"""The sim YAM: the rig's real arm and gripper, under the real controller.
+"""The sim YAM: the real arm and gripper, under the real controller.
 
 **Model.**  i2rt's own MJCF for the YAM Pro with the linear_4310 gripper
-(``assets/yam_pro_linear_4310``), not mjlab's YAM.  mjlab's carries the crank
-gripper, whose grasp point is about 35 mm nearer the wrist; replaying a demo on
-it closes the fingers that far from where the real ones closed.
+(``assets/yam_pro_linear_4310``), not mjlab's YAM, which carries the crank
+gripper, whose grasp point is about 35 mm nearer the wrist.
 
 **Controller.**  i2rt's PD gains with gravity compensation
 (``i2rt/robots/config/yam_pro.yml``).  mjlab's stock gains are a soft 2 Hz
@@ -76,9 +75,9 @@ GRIPPER_NATURAL_FREQ = 4.0 * 2.0 * np.pi   # 4 Hz, critically damped
 GRIPPER_FORCE = 100.0
 
 # Contact stiffness for the pads.  MuJoCo's default contact is soft in proportion to
-# 1/mass of what is being touched, and the paddle is light: under the grip force
-# the default lets each finger sink 9 mm into a 22 mm handle.  These bring that
-# under a millimetre.  0.01 s is the stiffest time constant a 5 ms step allows.
+# 1/mass of what is being touched, and light objects let each finger sink several
+# millimetres under the grip force.  These bring that under a millimetre.  0.01 s is
+# the stiffest time constant a 5 ms step allows.
 PAD_SOLREF = (0.01, 1.0)
 PAD_SOLIMP = (0.99, 0.995, 0.001, 0.5, 2.0)
 
