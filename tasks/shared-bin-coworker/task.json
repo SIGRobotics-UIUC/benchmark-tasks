@@ -14,7 +14,7 @@
   "scoring": "1/3 for each of the apple, orange and banana that is resting at the end of the run with its centre inside the green tray's inner walls (20 x 16 cm). 0 if the two arms touch at any point; the run stops at the first contact. 0 if any utensil ends up off the table.",
   "run_limit": "1,800 steps (90 seconds at 20 Hz)",
   "reset_notes": "Put the six objects back at their listed positions and start the other arm's recorded motion from its beginning at the same moment as the trial.",
-  "fidelity": "Approximate. Each arm's links collide as fitted capsules a little larger than the real links, so a near miss of under about 1 cm can count as a touch. Fruit are rigid shapes (spheres and a straight capsule) and the utensils are simplified flat plates; contacts are stiffened so resting objects sit within 1 mm of the surfaces under them. The gripper pinches with up to 50 N through flat pads. The arm controller uses the manufacturer's joint gains with gravity compensation and each motor's torque-speed limit. The other arm replays recorded joint targets rather than reacting.",
+  "fidelity": "Approximate. Arm links collide as fitted capsules slightly larger than the real links, so a near miss under about 1 cm can count as a touch. Fruit are rigid spheres and a straight capsule; utensils are flat plates; contacts are stiffened so objects rest within 1 mm of surfaces. The gripper pinches with up to 50 N through flat pads. The controller uses the manufacturer's joint gains, gravity compensation and motor torque-speed limits. The other arm replays recorded joint targets.",
   "scores": "Dream-1 run: 0.0; demo: 1.0",
   "media": "M-PK88FA"
 }
