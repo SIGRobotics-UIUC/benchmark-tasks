@@ -53,7 +53,7 @@ stroke, it checks that the two arms will stay at least 9 cm apart, and waits if 
 back up. It scored 1.0 in 569 steps. In 3 more runs, with every item and block moved up to 1 cm and the other arm
 starting up to 0.3 s early or late, it scored 1.0 each time.
 
-## Dream-1
+## Running Dream-1
 
 Not run. `dream_run.py` runs Dream-1 (`dreamlabs/dream-1-beta`) the way Dream Labs' YAM MuJoCo example does. Dream-1
 controls your arm, its rows for the other arm are ignored, and the prompt is the instruction in `task.json`.
