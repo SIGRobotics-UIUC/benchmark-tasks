@@ -1,0 +1,21 @@
+{
+  "title": "Unload a carousel another robot arm keeps loading",
+  "category": "Impact on jobs",
+  "keywords": [
+    "shared workspace",
+    "multi-robot",
+    "fixed routine",
+    "moving objects",
+    "timing",
+    "conveyor"
+  ],
+  "instruction": "Take each red block off the carousel and put it in the brown crate before it comes back round to the other arm.",
+  "context": "Unloading an indexing table or a conveyor that a coworker or a machine loads means taking each part while it is still, in time, before it comes round again. This checks that a policy can keep up with a moving fixture loaded by an arm on a fixed routine.",
+  "setup": "A 90 x 90 cm wooden table top, 75 cm high. Two YAM arms stand side by side at the back edge, 50 cm apart; the controlled arm is the right one in the screenshot. Distances are from the midpoint between the two arm bases: forward, and sideways toward the controlled arm (negative: toward the other arm). Trays and bins have 1.2 cm walls. A grey carousel 32 cm across with its top 1.5 cm high, 32 cm forward on the centre line, with eight station marks 11 cm out. A motor turns it an eighth of a turn counter-clockwise seen from above (from the other arm's side, round the front, to the controlled arm's) in the first 1.5 s of every 6 s, and holds it still the rest. A green 20 x 20 cm mat 31 cm forward and 30 cm toward the other arm, with five red 3 cm cubes (80 g) on it like the five on a die, 10 cm apart. A brown crate 16 x 18 cm inside, 33 cm forward and 30 cm toward the controlled arm. In every other stand-still, from the first, the other arm sets a cube from its mat on the station nearest it, five in all, whatever is already there. It does the same in every trial.",
+  "scoring": "The share of the five red cubes in the brown crate at the end. 0 if the two arms ever touch. The run stops at a touch, and 1 s after all five are in.",
+  "run_limit": "2,000 steps (100 s at 20 Hz)",
+  "reset_notes": "Put the five cubes back on the green mat; the carousel restarts from its starting turn.",
+  "fidelity": "Approximate. The carousel is driven on a stiff position motor along a fixed timetable; the cubes are rigid. Arm links collide as fitted capsules slightly larger than the real ones, so a near miss under about 1 cm can count as a touch. The gripper pinches with up to 50 N through flat pads. The other arm's routine is planned once from the fixed layout and replayed open loop.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-MVLT42"
+}
