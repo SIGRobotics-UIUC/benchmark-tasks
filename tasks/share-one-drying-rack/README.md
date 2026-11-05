@@ -1,0 +1,81 @@
+# Rack your cups in a drying rack another robot arm is also filling
+
+One YAM arm, the one under test, and a second YAM arm each have two cups on a mat beside them. There is one drying rack
+between them: a row of four square bays, each just big enough for one cup, so the four bays take exactly the four cups.
+The tested arm must put its two cups into the rack, one to a bay. The second arm puts its own two cups into free bays,
+keeping its hand away from the rack while the tested arm's hand is there, and taking its cup back to wait if the tested
+arm's hand comes to the rack while it is on its way. The arms must never touch.
+
+## Running a trial
+
+Python 3.11 and [uv](https://docs.astral.sh/uv/). A CUDA GPU is used when present.
+
+    uv sync
+    MUJOCO_GL=egl uv run python run_trial.py --policy hold                 # the arm stays still: 0.0
+    MUJOCO_GL=egl uv run python run_trial.py --policy demo --video demo.mp4 # the demonstration: 1.0
+    MUJOCO_GL=egl uv run python run_trial.py --policy mymodule:MyPolicy     # your policy
+    MUJOCO_GL=egl uv run python run_trial.py --screenshot setup.png         # the starting layout
+
+Each prints the score as JSON, for example
+`{"score": 1.0, "in_rack": ["left_cup_1", "left_cup_2"], "arms_touched": false, "other_cups_in_rack": 2, "steps": 433}`.
+
+**Runtime:** about 1 to 4 minutes per trial on an RTX 2070 Super, most of it rendering the two cameras every step.
+
+**Seeds:** none to choose. The layout is fixed, and the second arm's random waits are seeded (`PARTNER_SEED = 0` in
+`task_env.py`), so it moves the same way in every trial.
+
+## Interface
+
+`task_env.TaskEnv`: `reset()` and `step(action)` return the observation; `done` says when the trial is over; `score()`
+gives the result.
+
+- **Control:** 20 Hz, at most 3,600 steps (3 minutes). Inside each step the simulation steps at 50 Hz, the second arm
+  with it; the arm under test holds its command for the step.
+- **Action:** 7 numbers: six joint angle targets in radians, then the gripper, from 0 (closed) to 1 (open).
+- **Observation:** `joints`, 13 floats (six joint angles, the gripper opening from 0 to 1, six joint speeds); `overhead`
+  and `wrist`, 240 by 320 RGB images from a camera above the table and one on the controlled arm's wrist.
+- **The controlled arm:** the left arm in the scene (positive y), which is the arm on the right of the screenshot, as it
+  looks toward the arms. Its cups are the green ones, on the green mat beside it.
+
+## Scoring
+
+`TaskEnv.score()`:
+
+- The share of the two green cups that are down in a bay of the rack at the end: inside the rack, with the cup's middle
+  below 70% of the walls' height, so standing or leaning on a wall but not perched on a divider. A bay fits one cup.
+- 0 if the arms touched at any point. The trial stops at the first touch, and once both cups have been in the rack for
+  1 s.
+
+## The demo
+
+`--policy demo` drives the controlled arm with the same script as the second arm (`Racker` in `sim/partner.py`), at
+20 Hz. Unlike a policy, it reads the simulator's true state (where the cups, the rack and the other arm are), not the
+cameras: it shows that the task can be done with this arm in this scene. It waits a random while; then, cup by cup, it
+picks the cup nearest its own side, waits while the other hand is at the rack, carries the cup high over the free bay
+farthest from the other hand, lowers it in and lets go. With both arms scripted it racked all four cups, without the
+arms touching, in each of 8 runs with different random waits.
+
+## Running Dream-1
+
+`dream_run.py` runs Dream-1 (`dreamlabs/dream-1-beta`) on the task the way Dream Labs' own YAM MuJoCo example drives a
+simulator: both arms' joints and gripper openings, and nine-frame windows from the YAM station's three calibrated
+cameras (top, left wrist, right wrist), in the station's request keys. Dream-1 controls the left arm; its right-arm
+rows are not executed, since that arm is the task's scripted second arm. Simulated time stands still while a request is
+out.
+
+    uv sync --extra dream
+    MUJOCO_GL=egl uv run python dream_run.py --key-file <file holding the API key> --out dream_run
+    MUJOCO_GL=egl uv run python dream_run.py --dry-run                     # checks the request; no API call
+
+Our run scored 0.0: in 3 minutes (150 requests of 24 rows each) Dream-1 reached once toward the rack, then hovered over its green mat and nudged its cups without lifting either; the other arm racked both its cups, and the arms never touched. (A first attempt stopped after 5 requests when the Dream service restarted the session; this is the second.)
+
+## Files
+
+- `task_env.py`: the task, the second arm in it, and the scoring.
+- `run_trial.py`: runs and scores one trial; also the demo, the screenshot and videos.
+- `dream_run.py`: runs Dream-1 on the task (needs `uv sync --extra dream` and an API key).
+- `cameras.py`: the policy's two cameras, the YAM station's three cameras for Dream-1, and the wide view used for the
+  screenshot and videos (not given to the policy).
+- `sim/`: the scene (`benchmark.py`, `props.py`), the YAM model with its controller (`robot.py`, `env_cfg.py`), the
+  table (`scene.py`), inverse kinematics (`ik.py`), and the arms' script (`partner.py`).
+- `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt.
