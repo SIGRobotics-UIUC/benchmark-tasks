@@ -78,3 +78,4 @@ controls your arm; its rows for the other arm aren't executed. The prompt is the
   `env_cfg.py`), the table (`scene.py`), inverse kinematics (`ik.py`), and the scripts for the second arm and the demo
   (`partner.py`).
 - `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt.
+- `media/demo.mp4`: the demo run (`--policy demo`), scoring 1.0.
