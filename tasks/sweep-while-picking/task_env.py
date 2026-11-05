@@ -10,7 +10,7 @@ out of it.
 
 The controlled arm is the left one (positive y): on the right of the screenshot, which looks toward the arms.  The
 second arm (the right one) is scripted (``sim/partner.py``): it takes the four red blocks to its bin the same way in every
-trial.  Control is at 20 Hz, ``RUN_LIMIT`` steps at most.  Observations: ``joints`` (13: six joint angles, the gripper
+trial.  Control is at 20 Hz, ``RUN_LIMIT`` steps (30 s) at most.  Observations: ``joints`` (13: six joint angles, the gripper
 opening 0 to 1, six joint speeds), and two 240 by 320 colour images, ``overhead`` and ``wrist``.
 """
 

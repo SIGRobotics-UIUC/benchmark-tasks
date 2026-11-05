@@ -1,5 +1,5 @@
-"""The objects: a hand broom and the board it rests on, Arm 1's bin, the red blocks Arm 1 picks, and the clutter the
-controlled arm sweeps off the table.
+"""The objects: the hand broom, Arm 1's bin, the red blocks Arm 1 picks, and the clutter the controlled arm sweeps off
+the table.
 
 Each function returns an ``MjSpec`` with one root body.  Props that stay put have no joint; props that can be moved have
 a free joint."""
@@ -12,13 +12,10 @@ import mujoco
 
 BOX = mujoco.mjtGeom.mjGEOM_BOX
 SPHERE = mujoco.mjtGeom.mjGEOM_SPHERE
-CYLINDER = mujoco.mjtGeom.mjGEOM_CYLINDER
-ELLIPSOID = mujoco.mjtGeom.mjGEOM_ELLIPSOID
 OBJECT_SOLREF = (0.01, 1.0)
 OBJECT_SOLIMP = (0.99, 0.995, 0.001, 0.5, 2.0)
 """Contact stiffness for everything that can move, as for the finger pads (``sim.robot``): MuJoCo's default contact is
 soft in proportion to how light the object is, and light things sink into the table."""
-WOOD = (0.66, 0.5, 0.32, 1.0)
 
 
 def _stiffen(spec: mujoco.MjSpec) -> mujoco.MjSpec:
@@ -80,17 +77,6 @@ def broom_spec() -> mujoco.MjSpec:
   return _stiffen(spec)
 
 
-BROOM_REST = (0.24, 0.07, 0.015)
-"""Full sizes of the wooden board the broom starts standing on."""
-
-
-def broom_rest_spec() -> mujoco.MjSpec:
-  spec, body = _root("broom_rest", free=False)
-  x, y, z = BROOM_REST
-  body.add_geom(type=BOX, size=(x / 2, y / 2, z / 2), pos=(0, 0, z / 2), rgba=WOOD, friction=(0.8, 5e-3, 5e-4))
-  return spec
-
-
 # --- Arm 1's bin and blocks ----------------------------------------------------------------------------------------
 BIN = (0.15, 0.15, 0.06, 0.01)
 """Inside length, inside width, wall height and wall thickness of Arm 1's grey plastic bin."""
@@ -123,11 +109,10 @@ def red_block_spec() -> mujoco.MjSpec:
 
 # --- Clutter -------------------------------------------------------------------------------------------------------
 CLUTTER_KINDS = {
-  # kind: (description, builder args)
-  "cube": "painted wooden cube, 3 cm, 20 g",
-  "ball": "rubber ball, 4 cm diameter, 30 g",
-  "box": "empty plastic box, 6 x 4 x 3 cm, lid closed, 20 g",
-  "paper": "crumpled paper ball, about 4.5 cm across, 10 g",
+  "cube": "blue painted wooden cube, 3 cm, 20 g",
+  "ball": "yellow rubber ball, 4 cm, 30 g",
+  "box": "green empty plastic box, 6 x 4 x 3 cm, 20 g",
+  "paper": "white crumpled paper ball, about 4.5 cm, 10 g",
 }
 CLUTTER_COLORS = {"cube": (0.2, 0.45, 0.85, 1.0), "ball": (0.95, 0.8, 0.15, 1.0), "box": (0.2, 0.7, 0.35, 1.0),
                   "paper": (0.93, 0.93, 0.9, 1.0)}

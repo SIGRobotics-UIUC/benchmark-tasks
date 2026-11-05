@@ -130,13 +130,13 @@ BIN_XY = (0.16, -0.34)
 BROOM_XY = (0.22, 0.36)
 """The broom, standing on its bristles, its length along x, on the controlled arm's side."""
 RED_BLOCKS = ((0.20, 0.08), (0.32, 0.08), (0.40, 0.00), (0.15, 0.02))
-"""Where Arm 1's four red blocks start, in the order it picks them: all out in the area the controlled arm sweeps."""
+"""Where Arm 1's four red blocks start, in the order it picks them, all inside the area the controlled arm sweeps.  The
+first is at y = 0.08, not further out: there, Arm 1 hit the controlled arm resting in its ready pose."""
 CLUTTER = (
   ("ball", 0.15, 0.21), ("paper", 0.18, 0.27), ("box", 0.26, 0.24),
   ("ball", 0.36, 0.20), ("box", 0.44, 0.12), ("cube", 0.42, 0.34),
 )
-"""The six clutter items, (kind, x, y): spread along the table, two to each 20 cm the broom covers, so that no one stroke
-clears them, all within Arm 1's reach of its red blocks."""
+"""The six clutter items, (kind, x, y): two in each 20 cm band the broom covers, so no single stroke clears them."""
 CLUTTER_NAMES = tuple(f"clutter_{i}" for i in range(len(CLUTTER)))
 BLOCK_NAMES = tuple(f"red_block_{i}" for i in range(len(RED_BLOCKS)))
 

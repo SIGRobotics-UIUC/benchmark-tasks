@@ -4,10 +4,10 @@
     arm = Sweeper(arm, ik, rng, dt)       # the demonstration: sweeps the clutter off the table, yielding to Arm 1
     row = arm.act(env, e, now)            # every step: 6 joint targets (rad) and the gripper, 0 closed to 1 open
 
-The picker waits ``START`` seconds, then takes the red blocks one at a time, in a fixed order, to its bin, at the same
-pace every trial; a block that is no longer on the table is skipped.  The sweeper picks up the broom and sweeps the table
-in strokes toward its own side edge, one band of the table at a time, starting a band only once Arm 1 has taken the red
-blocks in it and is not reaching into it, then sweeps again wherever clutter is left."""
+The picker waits ``START`` seconds, then takes the red blocks to its bin one at a time, in a fixed order and at the same
+pace every trial, skipping any block that is no longer on the table.  The sweeper picks up the broom and makes one
+stroke toward its own side edge through each band of the table, starting each only when the two arms will stay apart,
+sweeps again at any clutter left, and stands the broom back up."""
 
 from __future__ import annotations
 
@@ -214,13 +214,13 @@ class Picker(Mover):
 
 
 class Sweeper(Mover):
-  """The demonstration: picks up the broom and sweeps the table toward its own side edge, one band at a time, starting
-  a stroke only when Arm 1's hand is not, and will not be during the stroke, near it; then sweeps again wherever items
-  are left.  Red blocks are swept like the rest, except the one Arm 1 is going for."""
+  """The demonstration: picks up the broom and sweeps toward its own side edge, one band at a time, starting a stroke
+  only when the two arms will stay ``KEEP_OUT`` apart throughout it; sweeps again at any clutter left; then stands the
+  broom back up.  It leaves the red blocks to Arm 1."""
 
   BANDS = ((0.17, 0.08), (0.30, 0.08), (0.42, 0.08))
-  """(grip x, start y) of the first strokes: first over this arm's own half of the table, which Arm 1 seldom reaches
-  into, then right across.  Not nearer this arm's base than x = 0.17: the broom caught on it."""
+  """(grip x, start y) of the strokes, one per band, over this arm's half of the table.  None nearer this arm's base
+  than x = 0.17: the broom caught on it."""
   CLEARANCE = 0.010
   """The bristles' tips ride this far above the table: every item is at least 3 cm tall, and bristles dragging on the
   table caught at its edge and twisted the broom out of the hand."""
@@ -244,7 +244,7 @@ class Sweeper(Mover):
     self.next_q: dict[str, np.ndarray | None] = {}
 
   def _points(self, q: np.ndarray, arm: str) -> np.ndarray:
-    """Points along an arm at joints ``q``: each link's origin, the midpoints between them, and the fingertips."""
+    """Points along an arm at joints ``q``: each link's origin, three points between each pair, and the grasp point."""
     self.ik._set(q)
     data, model = self.ik.data, self.ik.model
     chain = [data.xpos[model.body(n).id] for n in ("link2", "link3", "link4", "link5", "link6", "gripper")]
@@ -329,9 +329,8 @@ class Sweeper(Mover):
     self.glide(READY_Q, 1.5, 1.0)
 
   def _left(self, env: ManagerBasedRlEnv, e: int) -> list[np.ndarray]:
-    """Items still to sweep: clutter on the table, and red blocks on it other than the one Arm 1 is going for."""
-    names = list(b.CLUTTER_NAMES)  # The demo leaves the red blocks to Arm 1.
-    return [pos(env, n, e) for n in names if on_table(pos(env, n, e)) and not in_bin(pos(env, n, e))]
+    """Clutter still on the table."""
+    return [pos(env, n, e) for n in b.CLUTTER_NAMES if on_table(pos(env, n, e))]
 
   def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
     if self.stage == "wait":
