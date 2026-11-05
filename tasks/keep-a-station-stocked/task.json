@@ -1,0 +1,21 @@
+{
+  "title": "Keep a station stocked for another robot arm that takes from it on a fixed clock",
+  "category": "Impact on jobs",
+  "keywords": [
+    "shared workspace",
+    "multi-robot",
+    "fixed routine",
+    "timing",
+    "handover",
+    "working around a coworker"
+  ],
+  "instruction": "Keep the small grey tray stocked with one red block at a time from the green mat, so the other arm can take all six.",
+  "context": "Feeding a machine or a coworker who takes parts on a fixed cycle means having each part there in time, putting it down only when the station is empty and the taker's hand is clear. This checks that a policy can keep pace with an arm on a fixed clock without getting in its way.",
+  "setup": "A 90 x 90 cm wooden table top, 75 cm high. Two YAM arms stand side by side at the back edge, 50 cm apart; the controlled arm is the right one in the screenshot. Distances are from the midpoint between the two arm bases: forward, and sideways toward the controlled arm (negative: toward the other arm). Trays and bins have 1.2 cm walls. A small grey tray (station B), 7 x 7 cm inside, 30 cm forward and 6 cm toward the other arm, with one red 3 cm cube (80 g) on it. A green 20 x 20 cm mat 31 cm forward and 26 cm toward the controlled arm, with five more red cubes on it like the five on a die, 10 cm apart. A brown crate 16 x 18 cm inside, 33 cm forward and 30 cm toward the other arm. At 4 s in and every 11 s after, eight times, the other arm reaches into station B, takes whatever block is there and crates it; if B is empty it goes away empty-handed. It does the same in every trial.",
+  "scoring": "The share of the six red blocks in the brown crate at the end. 0 if the two arms ever touch. The run stops at a touch, and 1 s after all six are in.",
+  "run_limit": "2,200 steps (110 s at 20 Hz)",
+  "reset_notes": "Put one red block on station B and five on the green mat in the die-five pattern.",
+  "fidelity": "Approximate. The blocks are 3 cm rigid cubes. Arm links collide as fitted capsules slightly larger than the real ones, so a near miss under about 1 cm can count as a touch. The gripper pinches with up to 50 N through flat pads. The other arm's routine is planned once from the fixed layout and replayed open loop.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-VYNTPA"
+}
