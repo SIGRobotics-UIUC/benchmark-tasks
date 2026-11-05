@@ -4,3 +4,4 @@ __pycache__/
 dream_run/
 dream_run.log
 !media/demo.mp4
+.DS_Store
