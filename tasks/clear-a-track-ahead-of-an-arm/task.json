@@ -1,0 +1,20 @@
+{
+  "title": "Clear a track before another robot arm's hand comes along it",
+  "category": "Impact on jobs",
+  "keywords": [
+    "shared workspace",
+    "multi-robot",
+    "fixed routine",
+    "deadlines",
+    "clearing a path"
+  ],
+  "instruction": "Put the four objects on the yellow track in the brown bin before the other arm's hand reaches them.",
+  "context": "Clearing the path of a gantry, a cart or a coworker's tool means working ahead of it and never having a hand where it is about to be. This checks that a policy can do that ahead of an arm on a fixed routine that stops for nothing.",
+  "setup": "A 90 x 90 cm wooden table top, 75 cm high. Two YAM arms stand side by side at the back edge, 50 cm apart; the controlled arm is the right one in the screenshot. Distances are from the midpoint between the two arm bases: forward, and sideways toward the controlled arm (negative: toward the other arm). Trays and bins have 1.2 cm walls. A yellow track painted on the table, 6 cm wide, 30 cm forward, from 21 cm toward the other arm to 19 cm toward the controlled arm. On it: grey tins 3 cm across and 4 cm tall (60 g) at -10 and 6 cm, and white 3.2 cm paper cubes (60 g) at -2 and 14 cm. A brown bin 16 x 18 cm inside, 33 cm forward and 31 cm toward the controlled arm. About 8 s in, the other arm puts its closed hand down 2.5 cm over the track at -18 cm and runs it along the track to 16 cm at 1.2 cm/s, once, without stopping for anything. It does the same in every trial.",
+  "scoring": "The share of the four objects in the brown bin at the end. 0 if the other arm ever touches one of them, or if the two arms ever touch. The run stops at a touch between the arms, and 1 s after all four are in.",
+  "run_limit": "1,200 steps (60 s at 20 Hz)",
+  "reset_notes": "Put the four objects back on the track.",
+  "fidelity": "Approximate. The objects are a rigid cylinder and cube; a touch of the other arm on one is read from the simulator's contacts. Arm links collide as fitted capsules slightly larger than the real ones, so a near miss under about 1 cm can count as a touch. The gripper pinches with up to 50 N through flat pads. The other arm's routine is planned once from the fixed layout and replayed open loop.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-QPQLJQ"
+}
