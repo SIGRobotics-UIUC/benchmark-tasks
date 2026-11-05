@@ -1,13 +1,13 @@
-"""The scripted arms, each reading the scene's true state.
+"""The scripted arms: Arm 1 on a fixed, open-loop routine; the demonstration reading the scene's true state.
 
     arm = Sweeper(arm, ik, dt)            # Arm 1: sweeps the table clear (the task's other arm)
     arm = Picker(arm, ik, dt, sweeper)    # the demonstration: puts the red blocks in the bin, out of Arm 1's way
     row = arm.act(env, e, now)            # every step: 6 joint targets (rad) and the gripper, 0 closed to 1 open
 
-The sweeper is sweep-while-picking's demonstration, mirrored, never waiting or keeping clear: it picks up the broom,
-makes one stroke toward its own side edge through each band of the table, going straight from one to the next, sweeps
-again at any clutter left, and stands the broom back up.  The picker takes the red blocks to its bin one at a time, in a
-fixed order, getting out of the sweeper's way whenever it comes close."""
+The sweeper is open loop, planned once from the fixed layout and the same in every trial, never waiting or keeping
+clear: it picks up the broom, makes one stroke toward its own side edge through each band of the table, going straight
+from one to the next, and stands the broom back up.  The picker nudges the blocks in the broom's path out of it, then
+takes the red blocks to its bin one at a time, starting each pick only when the sweeper's timetable leaves room."""
 
 from __future__ import annotations
 
@@ -140,8 +140,8 @@ class Mover:
 
 class Sweeper(Mover):
   """Arm 1: picks up the broom and sweeps toward its own side edge, one band at a time, going straight from one stroke
-  to the next; sweeps again at any clutter left; then stands the broom back up.  It acts as if the other arm weren't
-  there."""
+  to the next; then stands the broom back up.  Planned once from the fixed layout and replayed open loop: it reads
+  nothing from the scene and acts as if the other arm weren't there."""
 
   BANDS = ((0.17, 0.08), (0.30, 0.08), (0.42, 0.08))
   """(grip x, start y) of the strokes, one per band, over this arm's half of the table; y is toward this arm.  None
@@ -160,8 +160,6 @@ class Sweeper(Mover):
   def __init__(self, arm: str, ik: ArmIk, dt: float) -> None:
     super().__init__(arm, ik, dt)
     self.rot = leaned((0.0, 1.0, 0.0))  # The jaw across the grip, the broom's length along x.
-    self.todo = list(self.BANDS)
-    self.extra = 0
 
   def _start(self, x: float, y0: float) -> np.ndarray:
     low = b.Z + props.GRIP_HEIGHT + self.CLEARANCE
@@ -182,8 +180,9 @@ class Sweeper(Mover):
     self.line(start, end, self.PACE * abs(end[1] - start[1]), 0.0)
     self.line(end, end + [0, 0, self.LIFT], 0.4, 0.0)
 
-  def _grab(self, env: ManagerBasedRlEnv, e: int) -> None:
-    grip = site(env, "broom", "grip", e)
+  def _grab(self) -> None:
+    """Take the broom by its grip, at its fixed starting spot."""
+    grip = np.array([*b.BROOM_XY, b.Z + props.GRIP_HEIGHT])
     above = grip + [0, 0, 0.08]
     self.glide(self.solve(above), 1.5, 1.0)
     self.line(above, grip, 0.8, 1.0)
@@ -199,49 +198,17 @@ class Sweeper(Mover):
     self.line(spot, spot + [0, 0, 0.08], 0.8, 1.0)
     self.glide(READY_Q, 1.5, 1.0)
 
-  def _left(self, env: ManagerBasedRlEnv, e: int) -> list[np.ndarray]:
-    """Clutter still on the table."""
-    return [pos(env, n, e) for n in b.CLUTTER_NAMES if on_table(pos(env, n, e))]
-
   def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
-    if self.stage == "wait":
-      if now < 0.5:  # Until the simulation has stepped, the broom's pose is not yet read back.
-        return
-      self._grab(env, e)
-      self.stage = "sweep"
+    """The whole routine, planned once from the fixed layout: it reads nothing from the scene."""
+    if self.stage != "wait" or now < 0.5:
       return
-    if self.stage != "sweep":
-      return
-    # Lost the broom (it is more than 3 cm from the hand)?  Put it down where it is and pick it up again.
-    if np.linalg.norm(site(env, "broom", "grip", e) - site(env, self.arm, GRASP_SITE, e)) > 0.03:
-      self.slips = getattr(self, "slips", 0) + 1
-      if self.slips > 2 or not on_table(pos(env, "broom", e)):
-        self.log.append(f"t={now:.1f}: the broom is lost; stopping")
-        self.stage = "done"
-        self.hold(0.5, 1.0)
-        return
-      self.log.append(f"t={now:.1f}: the broom slipped; picking it up again")
-      self.rot = leaned((0.0, 1.0, 0.0))
-      self.hold(0.5, 1.0)
-      self._grab(env, e)
-      return
-    if not self.todo:
-      left = self._left(env, e)
-      if not left or self.extra >= 12:
-        self._put_back()
-        self.stage = "done"
-        return
-      p = min(left, key=lambda p: self.side * p[1])  # The item farthest from the edge: sweeping it takes others with it.
-      self.todo.append((float(np.clip(p[0], 0.17, 0.42)), max(self.side * p[1] - 0.07, -0.12)))
-      self.extra += 1
-    x, y0 = self.todo.pop(0)
-    try:
+    self._grab()
+    for x, y0 in self.BANDS:
       start = self._start(x, y0)
-    except RuntimeError as err:
-      self.log.append(f"t={now:.1f}: dropping a stroke: {err}")
-      return
-    self.log.append(f"t={now:.1f}: sweeping at x={x:.2f} from y={start[1]:.2f}")
-    self._stroke(start)  # Then straight on to the next: it never waits for, or keeps clear of, the other arm.
+      self.log.append(f"stroke at x={x:.2f} from y={start[1]:.2f}")
+      self._stroke(start)  # Straight on to the next: it never waits for, or keeps clear of, the other arm.
+    self._put_back()
+    self.stage = "done"
 
 
 def arm_points(ik: ArmIk, q: np.ndarray, arm: str, broom: bool = False) -> np.ndarray:
@@ -259,11 +226,10 @@ def arm_points(ik: ArmIk, q: np.ndarray, arm: str, broom: bool = False) -> np.nd
 
 
 class Picker(Mover):
-  """The demonstration: the red blocks, one by one, into the bin: the two deep in Arm 1's side first, then the two near
-  the middle.  It doesn't wait for Arm 1, but
-  watches it: when Arm 1 or its broom is about to come within ``KEEP_OUT``, it gets out of the way over its bin, dropping
-  any block it holds (that block is tried again last).  If the broom moves the block it is reaching for before the
-  gripper closes, it backs off and goes for the next."""
+  """The demonstration: first nudges the blocks in the broom's path out of it, then puts the red blocks, one by one, in
+  the bin.  It knows Arm 1's fixed timetable: it starts a pick only if the whole pick and carry stays ``KEEP_OUT`` from
+  Arm 1 and its broom, and while waiting between picks it gets out of the way over its bin when Arm 1 comes close.  If
+  the broom moves the block it is reaching for before the gripper closes, it backs off and goes for the next."""
 
   CARRY = 0.15
   """Height above the table at which a block is carried and dropped over the bin."""
@@ -280,8 +246,33 @@ class Picker(Mover):
     self.reaching = 0
     self.todo = list(b.BLOCK_NAMES)
     self.holding: str | None = None
-    self.stage = "next"
+    self.stage = "push"
     self.ordered = False
+
+  LANE = -0.05
+  """A block nearer Arm 1's side than this (y, toward Arm 1 negative) is in a broom stroke's path: Arm 1's strokes start
+  with the broom's middle at y = -0.08, coming down onto any block there."""
+  PUSH_AT = 1.3
+  """Seconds in when the pushes start: by then Arm 1 has swung out toward its broom, clear of this arm's way in."""
+  SAFE = 0.09
+  """Where a block in a stroke's path is pushed to (y): out of every stroke's path, clear of the blocks already there."""
+
+  def _push_out(self, env: ManagerBasedRlEnv, e: int) -> None:
+    """Nudge every block in a broom stroke's path out of it, across toward this arm's side, with the closed fingers,
+    nearest the bases first.  Arm 1's first stroke comes down about 5.5 s in; picking both blocks takes far longer."""
+    self.rot = leaned((0.0, 1.0, 0.0))
+    z = b.Z + 0.022
+    blocks = sorted((pos(env, n, e) for n in b.BLOCK_NAMES), key=lambda p: p[0])
+    for p in blocks:
+      if self.side * p[1] > self.LANE:
+        continue
+      behind = np.array([p[0], p[1] - self.side * 0.040, z])
+      ahead = np.array([p[0], self.side * self.SAFE - self.side * 0.020, z])
+      self.glide(self.solve(behind + [0, 0, 0.06]), 0.7, 0.0)
+      self.line(behind + [0, 0, 0.06], behind, 0.25, 0.0)
+      self.line(behind, ahead, 0.7, 0.0)
+      self.line(ahead, ahead + [0, 0, 0.06], 0.2, 0.0)
+      self.log.append(f"pushing the block at {np.round(p[:2], 3).tolist()} out of the broom's path")
 
   def _pick(self, env: ManagerBasedRlEnv, e: int, name: str) -> list[tuple[np.ndarray, float]] | None:
     """The rows taking ``name`` into the bin, or None if the arm can't reach it."""
@@ -292,9 +283,10 @@ class Picker(Mover):
     q0, queue0 = self.q.copy(), self.queue
     self.queue = []
     try:
-      self.rot = leaned((-np.sin(yaw), np.cos(yaw), 0.0))
       grasp = p + [0.0, 0.0, 0.010]  # Any lower, and at full reach the leaning fingers pressed on the table.
-      for rise in (0.10, 0.08, 0.06):  # As high above the block as the arm reaches there.
+      jaw = (-np.sin(yaw), np.cos(yaw), 0.0)
+      # Leaning forward reaches the far table; a block pushed in close to this arm's base needs the fingers plumb.
+      for self.rot, rise in [(r, h) for r in (leaned(jaw), plumb(jaw)) for h in (0.10, 0.08, 0.06)]:
         above = grasp + [0, 0, rise]
         try:
           q_above = self.solve(above)
@@ -325,6 +317,15 @@ class Picker(Mover):
       self.queue, self.q = queue0, q0
 
   def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
+    if self.stage == "push":
+      if now < self.PUSH_AT:
+        return
+      self._push_out(env, e)
+      self.stage = "pushing"  # Not interrupted: the pushes are timed to finish before Arm 1's first stroke.
+      return
+    if self.stage == "pushing":
+      self.stage = "next"
+      return
     if self.stage == "retreat":
       self.stage = "next"
       return
@@ -347,17 +348,37 @@ class Picker(Mover):
       self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + 0.20]), 1.5, 1.0)
       self.stage = "done"
       return
-    # The next block, in order.
-    name = self.todo.pop(0)
-    rows = self._pick(env, e, name)
-    if rows is None:
-      self.log.append(f"t={now:.1f}: cannot reach {name}; skipping it")
+    # The first block, in order, whose whole pick and carry stay clear of Arm 1's planned motion; if none, wait.
+    for name in list(self.todo):
+      rows = self._pick(env, e, name)
+      if rows is None:
+        self.log.append(f"t={now:.1f}: cannot reach {name}; skipping it")
+        self.todo.remove(name)
+        return
+      if self._clear(env, e, rows):
+        break
+    else:
+      self.hold(0.2, self.grip)
       return
+    self.todo.remove(name)
     self.log.append(f"t={now:.1f}: taking {name}")
     self.queue += rows
     self.q = rows[-1][0]
     self.holding, self.target, self.reaching = name, pos(env, name, e), self.reach
     self.stage = "carry"
+
+  def _clear(self, env: ManagerBasedRlEnv, e: int, rows) -> bool:
+    """Whether this arm, following ``rows``, stays ``KEEP_OUT`` from Arm 1 and its broom along Arm 1's planned motion,
+    time for time."""
+    other = self.sweeper
+    for k in range(0, len(rows), 4):
+      i = int(round(k * self.dt / other.dt))
+      theirs = other.queue[min(i, len(other.queue) - 1)][0] if other.queue else other.current
+      a = arm_points(self.ik, theirs, other.arm, broom=True)
+      m = arm_points(self.ik, rows[k][0], self.arm)
+      if np.linalg.norm(m[:, None] - a[None], axis=-1).min() < self.KEEP_OUT:
+        return False
+    return True
 
   def _coming(self, env: ManagerBasedRlEnv, e: int) -> bool:
     """Whether Arm 1 or its broom comes within ``KEEP_OUT`` of this arm over the next ``SOON`` seconds."""
@@ -371,7 +392,7 @@ class Picker(Mover):
     return np.linalg.norm(m[:, None] - a[None], axis=-1).min() < self.KEEP_OUT
 
   def act(self, env: ManagerBasedRlEnv, e: int, now: float) -> np.ndarray:
-    if self.stage in ("next", "carry") and self._coming(env, e):
+    if self.stage == "next" and self._coming(env, e):  # A pick under way was checked against the timetable.
       # Out of the way: up and over the bin, letting go of any block.
       self.log.append(f"t={now:.1f}: Arm 1 coming; getting out of the way")
       if self.holding is not None:

@@ -9,8 +9,8 @@ broom.
     print(env.score())
 
 The controlled arm is the left one (positive y): on the right of the screenshot, which looks toward the arms.  The
-second arm (the right one) is scripted (``sim/partner.py``): it sweeps the table the same way in every trial, unless the
-clutter is moved.  Control is at 20 Hz, ``RUN_LIMIT`` steps (30 s) at most.  Observations: ``joints`` (13: six joint
+second arm (the right one) is scripted (``sim/partner.py``): it sweeps the table on a fixed, open-loop routine, the same
+way in every trial.  Control is at 20 Hz, ``RUN_LIMIT`` steps (30 s) at most.  Observations: ``joints`` (13: six joint
 angles, the gripper opening 0 to 1, six joint speeds), and two 240 by 320 colour images, ``overhead`` and ``wrist``.
 """
 
@@ -126,7 +126,7 @@ class TaskEnv:
       bad = self._unstable()
       if bad:
         raise RuntimeError(f"t={self.ticks * self.env.step_dt:.1f}: the simulation became unstable ({bad}); the trial is invalid")
-      self.done = self.contact is not None or (self._settled() and self.partner.stage == "done" and self._finished())
+      self.done = self.contact is not None or (self._settled() and self.partner.stage == "done" and not self.partner.queue and self._finished())
     self.done = self.done or self.steps >= RUN_LIMIT
     return self._obs()
 
