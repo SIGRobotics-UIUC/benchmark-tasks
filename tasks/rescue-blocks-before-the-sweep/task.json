@@ -1,0 +1,20 @@
+{
+  "title": "Rescue blocks from clutter before another robot arm sweeps it away",
+  "category": "Impact on jobs",
+  "keywords": [
+    "shared workspace",
+    "multi-robot",
+    "fixed routine",
+    "deadlines",
+    "working around a coworker"
+  ],
+  "instruction": "Put the three red blocks in the brown bin before the other arm sweeps their lanes.",
+  "context": "Saving parts from a line before a sweeper or a scraper comes through means working to its timetable and never having a hand in its path. This checks that a policy can beat an arm on a fixed schedule to each part while keeping out of its sweep.",
+  "setup": "A 90 x 90 cm wooden table top, 75 cm high. Two YAM arms stand side by side at the back edge, 50 cm apart; the controlled arm is the right one in the screenshot. Distances are from the midpoint between the two arm bases: forward, and sideways toward the controlled arm (negative: toward the other arm). Trays and bins have 1.2 cm walls. Five pieces in a row of lanes across the table, at 22, 28, 34, 40 and 46 cm forward: red 3 cm cubes (80 g) in the first, third and fifth, 5 cm toward the controlled arm; white 3.2 cm paper cubes (60 g) in the second and fourth, 2 cm toward the other arm. A grey patch painted on the table, 36 x 14 cm, 34 cm forward and 24 cm toward the other arm. A brown bin 16 x 18 cm inside, 33 cm forward and 30 cm toward the controlled arm. From 12 s in, every 10 s, the other arm puts its closed hand down 4.5 cm on the controlled arm's side of the next lane, nearest first, and pushes it across onto the grey patch at 10 cm/s, whatever is in it. It does the same in every trial.",
+  "scoring": "The share of the three red blocks in the brown bin at the end. 0 if a white scrap is anywhere but the clutter and the grey patch, or if the two arms ever touch. The run stops at a touch, and 1 s after the score first holds at 1.",
+  "run_limit": "1,500 steps (75 s at 20 Hz)",
+  "reset_notes": "Put the five pieces back in their lanes.",
+  "fidelity": "Approximate. The blocks and scraps are rigid cubes; the patch is painted, with no lip. Arm links collide as fitted capsules slightly larger than the real ones, so a near miss under about 1 cm can count as a touch. The gripper pinches with up to 50 N through flat pads. The other arm's routine is planned once from the fixed layout and replayed open loop.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-3CQUHZ"
+}
