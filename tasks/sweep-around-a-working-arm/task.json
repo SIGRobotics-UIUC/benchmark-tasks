@@ -1,0 +1,20 @@
+{
+  "title": "Sweep rubbish off a table while another robot arm picks parts from it",
+  "category": "Impact on jobs",
+  "keywords": [
+    "shared workspace",
+    "multi-robot",
+    "fixed routine",
+    "pushing",
+    "working around a coworker"
+  ],
+  "instruction": "Push the four white scraps out of the middle of the table onto the green patch on your side.",
+  "context": "Cleaning a bench while someone else is still working at it means sweeping where they are not and staying out of their reach when they come in. This checks that a policy can do that beside an arm on a fixed routine that will not wait for it.",
+  "setup": "A 90 x 90 cm wooden table top, 75 cm high. Two YAM arms stand side by side at the back edge, 50 cm apart; the controlled arm is the right one in the screenshot. Distances are from the midpoint between the two arm bases: forward, and sideways toward the controlled arm (negative: toward the other arm). Trays and bins have 1.2 cm walls. Clutter in the middle of the table: three red 3 cm cubes (80 g) at 24, 34 and 44 cm forward, 6 to 7 cm toward the other arm; four white 3.2 cm paper cubes (60 g) at 22, 30, 38 and 46 cm forward, 3 to 4.5 cm toward the controlled arm. A green patch painted on the table, 36 x 14 cm, 34 cm forward and 24 cm toward the controlled arm. A brown bin 16 x 18 cm inside, 33 cm forward and 30 cm toward the other arm. At 5, 14 and 23 s the other arm reaches into the clutter for the next red cube, nearest first, and drops it in its bin, without waiting or looking. It does the same in every trial.",
+  "scoring": "The share of the four white scraps on the green patch at the end. 0 if a red cube is anywhere but the clutter and the brown bin, or if the two arms ever touch. The run stops at a touch, and 1 s after the score first holds at 1.",
+  "run_limit": "1,200 steps (60 s at 20 Hz)",
+  "reset_notes": "Put the red cubes and the white scraps back in the clutter.",
+  "fidelity": "Approximate. The scraps and parts are rigid cubes; the patch is painted, with no lip. Arm links collide as fitted capsules slightly larger than the real ones, so a near miss under about 1 cm can count as a touch. The gripper pinches with up to 50 N through flat pads. The other arm's routine is planned once from the fixed layout and replayed open loop.",
+  "scores": "Dream-1 run: 0.0; demo: 1.0",
+  "media": "M-3V3S5J"
+}

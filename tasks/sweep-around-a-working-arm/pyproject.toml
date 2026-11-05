@@ -1,0 +1,28 @@
+[project]
+name = "sweep-around-a-working-arm"
+version = "0.1.0"
+description = "A YAM arm sweeps the rubbish off the middle of the table while a second YAM arm, working to a fixed routine, picks red blocks out of it"
+readme = "README.md"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+  "mjlab==1.6.0",
+  "torch==2.14.0",
+  "pillow>=10",
+  "mediapy>=1.2",
+]
+
+[project.optional-dependencies]
+# Only for running Dream-1 on the task (dream_run.py).
+dream = ["dreamlabs-client==1.0.0"]
+
+[tool.uv]
+package = false
+
+# CUDA 13 torch, as pong's venv has it; the default PyPI wheel carries an older CUDA.
+[tool.uv.sources]
+torch = [{ index = "pytorch-cu130" }]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
