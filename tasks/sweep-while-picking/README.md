@@ -17,7 +17,7 @@ Python 3.11 and [uv](https://docs.astral.sh/uv/). A CUDA GPU is used when presen
     MUJOCO_GL=egl uv run python run_trial.py --screenshot setup.png          # the starting layout
 
 (Leave out `MUJOCO_GL=egl` on a Mac.) Each one prints the score as JSON, for example
-`{"score": 1.0, "items_gone": 10, "items_counted": 10, "clutter_left": 0, "red_binned": 3, "red_swept_off": 1, "contact": null, "steps": 569}`.
+`{"score": 1.0, "items_gone": 6, "items_counted": 6, "clutter_left": 0, "red_binned": 4, "red_swept_off": 0, "contact": null, "steps": 569}`.
 
 **Runtime:** about 1 to 2 minutes per trial on an M-series Mac's CPU, mostly spent rendering the two cameras.
 
