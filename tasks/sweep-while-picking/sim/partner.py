@@ -1,11 +1,12 @@
-"""The scripted arms, each reading the scene's true state.
+"""The scripted arms: Arm 1 on a fixed, open-loop routine; the demonstration reading the scene's true state.
 
-    arm = Picker(arm, ik, rng, dt)        # Arm 1: picks the red blocks into its bin (the task's other arm)
+    arm = Picker(arm, ik, rng, dt)        # Arm 1 (open loop): picks the red blocks into its bin (the task's other arm)
     arm = Sweeper(arm, ik, rng, dt)       # the demonstration: sweeps the clutter off the table, yielding to Arm 1
     row = arm.act(env, e, now)            # every step: 6 joint targets (rad) and the gripper, 0 closed to 1 open
 
-The picker waits ``START`` seconds, then takes the red blocks to its bin one at a time, in a fixed order and at the same
-pace every trial, skipping any block that is no longer on the table.  The sweeper picks up the broom and makes one
+The picker is open loop, planned once from the fixed layout: it waits ``START`` seconds, then takes the red blocks to its
+bin one at a time, in a fixed order and at the same pace every trial, reaching for each whether or not it is still
+there.  The sweeper picks up the broom and makes one
 stroke toward its own side edge through each band of the table, starting each only when the two arms will stay apart,
 sweeps again at any clutter left, and stands the broom back up."""
 
@@ -153,29 +154,14 @@ class Picker(Mover):
     self.holding: str | None = None
 
   def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
-    if self.stage == "wait":
-      if now >= self.start:
-        self.stage = "next"
+    """The whole routine, planned once from the fixed layout: it reads nothing from the scene, and goes for every block
+    in the listed order whether or not it is still there."""
+    if self.stage != "wait":
       return
-    if self.stage == "next":
-      self.holding = None
-      while self.todo:
-        name = self.todo.pop(0)
-        p = pos(env, name, e)
-        if on_table(p) and not in_bin(p):
-          break
-        self.log.append(f"t={now:.1f}: {name} is gone; skipping it")
-      else:
-        # Done: wait high over the bin, out of the way.
-        self.rot = leaned((0.0, 1.0, 0.0))
-        self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + 0.20]), 1.5, 1.0)
-        self.stage = "release"
-        return
-      # The jaw across the block's faces, whichever pair is nearest across the table (y).
-      yaw = block_yaw(env, name, e)
-      yaw = (yaw + np.pi / 4) % (np.pi / 2) - np.pi / 4
-      self.rot = leaned((-np.sin(yaw), np.cos(yaw), 0.0))
-      grasp = p + [0.0, 0.0, 0.004]
+    self.hold(self.start, 1.0)
+    for name, (x, y) in zip(b.BLOCK_NAMES, b.RED_BLOCKS):
+      self.rot = leaned((0.0, 1.0, 0.0))
+      grasp = np.array([x, y, b.Z + props.BLOCK / 2 + 0.004])
       for rise in (0.10, 0.08, 0.06):  # As high above the block as the arm reaches there.
         above = grasp + [0, 0, rise]
         try:
@@ -185,32 +171,23 @@ class Picker(Mover):
           continue
         break
       else:
-        self.log.append(f"t={now:.1f}: cannot reach {name} at {np.round(p, 3).tolist()}; skipping it")
-        self.holding = None
-        return
+        raise RuntimeError(f"cannot reach {name}")
       self.glide(q_above, 1.8, 1.0)
       self.line(above, grasp, 0.8, 1.0)
       self.hold(0.5, 0.0)
       self.line(grasp, above, 0.8, 0.0)
-      self.holding = name
-      self.stage = "carry"
-      self.log.append(f"t={now:.1f}: taking {name}")
-    elif self.stage == "carry":
-      self.rot = leaned((0.0, 1.0, 0.0))
       # Each block to its own spot in the bin, so they don't stack; the bin's middle if the arm can't reach the spot.
-      spot = [(0.04, 0.035), (0.04, -0.035), (0.0, 0.035), (0.0, -0.035)][b.BLOCK_NAMES.index(self.holding) % 4]
+      spot = [(0.04, 0.035), (0.04, -0.035), (0.0, 0.035), (0.0, -0.035)][b.BLOCK_NAMES.index(name) % 4]
       try:
         q = self.solve([b.BIN_XY[0] + spot[0], b.BIN_XY[1] + spot[1], b.Z + self.CARRY])
       except RuntimeError:
         q = self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + self.CARRY])
       self.glide(q, 1.8, 0.0)
       self.hold(0.5, 1.0)
-      self.stage = "dropped"
-    elif self.stage == "dropped":
-      self.holding = None
-      self.stage = "next"
-    elif self.stage == "release":
-      self.stage = "done"
+      self.log.append(f"t={self.dt * len(self.queue):.1f}: drops {name}")
+    # Done: wait high over the bin, out of the way.
+    self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + 0.20]), 1.5, 1.0)
+    self.stage = "done"
 
 
 class Sweeper(Mover):
@@ -363,7 +340,7 @@ class Sweeper(Mover):
         self.stage = "done"
         return
       p = min(left, key=lambda p: p[1])  # The item farthest from the edge: sweeping it takes others with it.
-      self.todo.append((float(np.clip(p[0], 0.17, 0.42)), max(p[1] - 0.07, -0.12)))
+      self.todo.append((float(np.clip(p[0] - 0.06, 0.17, 0.48)), max(p[1] - 0.07, -0.12)))
       self.extra += 1
     # The first stroke Arm 1 is clear of; if none, wait parked and look again.
     for i, (x, y0) in enumerate(self.todo):

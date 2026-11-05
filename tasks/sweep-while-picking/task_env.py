@@ -38,7 +38,7 @@ READY = np.array([READY_JOINTS[j] for j in ARM_JOINTS])
 PARTNER_SEED = 0
 """Seeds the second arm's start: fixed, so that it moves the same way in every trial."""
 HELD = 0.03
-"""A red block counts as in Arm 1's hand while its picker holds it and it is within 3 cm of the grasp point."""
+"""A red block counts as in Arm 1's hand while it is within 3 cm of Arm 1's grasp point."""
 
 
 def _row(action) -> np.ndarray:
@@ -69,7 +69,7 @@ class TaskEnv:
     self.steps = self.ticks = 0
     self.done = False
     self.contact: str | None = None
-    self.partner = Picker(RIGHT_ARM, self.ik, np.random.default_rng(PARTNER_SEED), self.env.step_dt)
+    self.partner = Picker(RIGHT_ARM, ArmIk(), np.random.default_rng(PARTNER_SEED), self.env.step_dt)  # Its own IK, so its plan never depends on yours.
     return self._obs()
 
   def _found(self, sensor: str) -> bool:
@@ -81,10 +81,9 @@ class TaskEnv:
       return "the arms touched"
     if self._found("broom_picker_contact"):
       return "the broom touched Arm 1"
-    held = self.partner.holding
-    if held is not None:
-      robot = self.env.scene[RIGHT_ARM]
-      hand = (robot.data.site_pos_w[0, robot.site_names.index(GRASP_SITE)] - self.env.scene.env_origins[0]).cpu().numpy()
+    robot = self.env.scene[RIGHT_ARM]
+    hand = (robot.data.site_pos_w[0, robot.site_names.index(GRASP_SITE)] - self.env.scene.env_origins[0]).cpu().numpy()
+    for held in b.BLOCK_NAMES:
       if np.linalg.norm(pos(self.env, held, 0) - hand) < HELD:
         if self._found(f"{held}_sweeper_contact"):
           return "the controlled arm touched the block in Arm 1's hand"
@@ -93,11 +92,9 @@ class TaskEnv:
     return None
 
   def cleared(self) -> tuple[int, int]:
-    """(items gone, items counted): every clutter item counts, and is gone once it is off the table; a red block counts
-    only once it is off the table, so one left on the table, or binned by Arm 1, neither helps nor costs."""
-    clutter = sum(not on_table(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES)
-    red = sum(not on_table(pos(self.env, n, 0)) for n in b.BLOCK_NAMES)
-    return clutter + red, len(b.CLUTTER_NAMES) + red
+    """(clutter items off the table, clutter items).  The red blocks are Arm 1's: whether they are binned, left on the
+    table or swept off neither helps nor costs."""
+    return sum(not on_table(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES), len(b.CLUTTER_NAMES)
 
   finished = None
   """Set by a driver (the demo) to a function saying the controlled arm has finished; otherwise the trial ends as soon
@@ -132,13 +129,13 @@ class TaskEnv:
       if bad:
         raise RuntimeError(f"t={self.ticks * self.env.step_dt:.1f}: the simulation became unstable ({bad}); the trial is invalid")
       gone, counted = self.cleared()
-      self.done = self.contact is not None or (gone == counted and self.partner.stage == "done" and self._finished())
+      self.done = self.contact is not None or (gone == counted and self.partner.stage == "done" and not self.partner.queue and self._finished())
     self.done = self.done or self.steps >= RUN_LIMIT
     return self._obs()
 
   def score(self) -> dict:
-    """Items off the table over items counted: the 6 clutter items, plus each red block that is off the table.  0 if the
-    controlled arm or the broom ever touched Arm 1 or the block in its hand."""
+    """The share of the 6 clutter items off the table.  0 if the controlled arm or the broom ever touched Arm 1 or the
+    block in its hand."""
     gone, counted = self.cleared()
     value = 0.0 if self.contact else gone / counted
     return {"score": round(value, 3), "items_gone": gone, "items_counted": counted,

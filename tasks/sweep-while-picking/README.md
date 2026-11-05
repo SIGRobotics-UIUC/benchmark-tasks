@@ -17,11 +17,12 @@ Needs Python 3.11 and [uv](https://docs.astral.sh/uv/). Uses a CUDA GPU if there
 
 On a Mac, leave out `MUJOCO_GL=egl`. Each command prints the score as JSON, for example:
 
-    {"score": 1.0, "items_gone": 6, "items_counted": 6, "clutter_left": 0, "red_binned": 4, "red_swept_off": 0, "contact": null, "steps": 569}
+    {"score": 1.0, "items_gone": 6, "items_counted": 6, "clutter_left": 0, "red_binned": 4, "red_swept_off": 0, "contact": null, "steps": 566}
 
 **Runtime:** about 1 to 2 minutes per trial on an M-series Mac CPU, mostly rendering the cameras.
 
-**Seeds:** none. The layout is fixed, and the second arm moves the same way every trial.
+**Seeds:** none. The layout is fixed, and the second arm's routine is planned from it the same way every time, so it
+moves the same way in every trial.
 
 ## Interface
 
@@ -37,11 +38,18 @@ On a Mac, leave out `MUJOCO_GL=egl`. Each command prints the score as JSON, for 
 
 ## Scoring
 
-- Score = items swept off the table / items counted.
-- All 6 clutter items count. A red block counts only if it ends up off the table; red blocks in the bin or still on
-  the table are left out. The other arm's work never earns you anything, and leaving red blocks alone never costs you.
+- Score = clutter items off the table / 6.
+- Red blocks don't count either way: binned by the other arm, left on the table or swept off, they neither earn nor
+  cost you anything.
 - 0 if your arm or the broom touches the other arm or the block it's holding. The trial stops at the first touch.
-- The trial ends at 600 steps, or earlier once every counted item is gone and the other arm has finished.
+- The trial ends at 600 steps, or earlier once all the clutter is gone and the other arm has finished.
+
+## The second arm
+
+`Picker` in `sim/partner.py`. It waits 2 s, then reaches for each red block's starting spot in turn and drops it in
+its bin, one every 6.2 s, the last at about 27 s. Every move is planned when the trial starts, from the scene's fixed
+layout, and played on the same clock in every trial: it reads nothing from the scene while it runs, reaches for a block
+whether or not it is still there, and never waits for or steers around your arm. Holding still scores 0.0.
 
 ## The demo
 
@@ -49,9 +57,9 @@ On a Mac, leave out `MUJOCO_GL=egl`. Each command prints the score as JSON, for 
 simulator's true state, including where the other arm is about to move. It only shows the task can be done.
 
 It picks up the broom and makes one stroke toward its own edge through each 20 cm band of the table. Before each
-stroke, it checks that the two arms will stay at least 9 cm apart, and waits if they won't. Then it stands the broom
-back up. It scored 1.0 in 569 steps. In 3 more runs, with every item and block moved up to 1 cm and the other arm
-starting up to 0.3 s early or late, it scored 1.0 each time.
+stroke, it checks that the two arms will stay at least 9 cm apart, and waits if they won't. It sweeps again at any
+clutter left, then stands the broom back up. It scored 1.0 in 566 steps. In 8 more runs, with every item and block
+moved up to 1 cm and the other arm starting up to 0.3 s early or late, it scored 1.0 each time.
 
 ## Running Dream-1
 
