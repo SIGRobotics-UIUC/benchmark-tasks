@@ -1,0 +1,129 @@
+"""The objects: a turntable with four pegs, two trays and the two cubes.
+
+Each function returns an ``MjSpec`` with one root body.  Props that stay put have no free joint; the cubes have one,
+and the turntable's disc turns on a hinge."""
+
+from __future__ import annotations
+
+import math
+
+import mujoco
+
+BOX = mujoco.mjtGeom.mjGEOM_BOX
+GRIP_FRICTION = (1.0, 5e-3, 5e-4)
+OBJECT_SOLREF = (0.01, 1.0)
+OBJECT_SOLIMP = (0.99, 0.995, 0.001, 0.5, 2.0)
+"""Contact stiffness for everything that can be picked up, as for the finger pads (``sim.robot``).  MuJoCo's default
+contact is soft in proportion to how light the object is: with it a 4 mm utensil sank 6.6 mm into the table, the bin and
+the trays, out of sight, and a fruit 7 mm into its tray.  Priority 1 makes these settings win against the boxes and the
+table; the pads have the same, so a grip is unchanged."""
+
+
+def _stiffen(spec: mujoco.MjSpec) -> mujoco.MjSpec:
+  for geom in spec.geoms:
+    if geom.contype or geom.conaffinity:
+      geom.solref, geom.solimp, geom.priority = OBJECT_SOLREF, OBJECT_SOLIMP, 1
+  return spec
+
+
+def _root(name: str, free: bool) -> tuple[mujoco.MjSpec, mujoco.MjsBody]:
+  spec = mujoco.MjSpec()
+  body = spec.worldbody.add_body(name=name)
+  if free:
+    body.add_freejoint(name=f"{name}_joint")
+  return spec, body
+
+
+def _open_box(body, inner: tuple[float, float], height: float, wall: float, floor: float, rgba, mass: float = 0.0) -> None:
+  """Walls and a floor around the body's origin, which is at the middle of the underside."""
+  ix, iy = inner[0] / 2, inner[1] / 2
+  density = {} if mass == 0.0 else {"mass": mass / 5}
+  body.add_geom(type=BOX, size=(ix + wall, iy + wall, floor / 2), pos=(0, 0, floor / 2), rgba=rgba, friction=GRIP_FRICTION, **density)
+  mid = floor + height / 2
+  for sign in (1, -1):
+    body.add_geom(
+      type=BOX, size=(ix + wall, wall / 2, height / 2), pos=(0, sign * (iy + wall / 2), mid), rgba=rgba,
+      friction=GRIP_FRICTION, **density,
+    )
+    body.add_geom(
+      type=BOX, size=(wall / 2, iy, height / 2), pos=(sign * (ix + wall / 2), 0, mid), rgba=rgba,
+      friction=GRIP_FRICTION, **density,
+    )
+
+
+def tray_spec(name: str, inner: tuple[float, float], rgba) -> mujoco.MjSpec:
+  spec, body = _root(name, free=False)
+  _open_box(body, inner, 0.012, wall=0.006, floor=0.004, rgba=rgba)
+  return spec
+HANDLE_FRICTION = (2.0, 0.02, 5e-4)
+"""Sliding 2.0, a textured rubber grip; torsional 2 cm, as a pad pressed flat on the handle grips over its area.  MuJoCo
+contacts touch at points, and with the grip's default 5 mm the pinch let the hammer turn head down about the jaw
+(the pads' normal) in most pick-ups, however light it was.  The pads mix to the larger value, so only the handle
+changes."""
+PART_KINDS = {
+  "red": {"shape": "cube", "size": 0.015, "mass": 0.08, "rgba": (0.8, 0.15, 0.12, 1.0)},
+  "blue": {"shape": "cylinder", "size": (0.014, 0.0175), "mass": 0.07, "rgba": (0.15, 0.3, 0.8, 1.0)},
+  "yellow": {"shape": "bar", "size": (0.015, 0.026, 0.012), "mass": 0.08, "rgba": (0.95, 0.8, 0.15, 1.0)},
+  # Rubbish, for the trash can: shaped like the parts, so that one script picks up either.
+  "paper": {"shape": "cube", "size": 0.016, "mass": 0.06, "rgba": (0.93, 0.93, 0.9, 1.0)},
+  "tin": {"shape": "cylinder", "size": (0.015, 0.02), "mass": 0.06, "rgba": (0.72, 0.74, 0.78, 1.0)},
+  "wrapper": {"shape": "bar", "size": (0.015, 0.026, 0.012), "mass": 0.07, "rgba": (0.95, 0.45, 0.1, 1.0)},
+  # Cups, for the drying rack: one colour per arm.
+  "green_cup": {"shape": "cylinder", "size": (0.017, 0.015), "mass": 0.07, "rgba": (0.3, 0.7, 0.35, 1.0)},
+  "blue_cup": {"shape": "cylinder", "size": (0.017, 0.015), "mass": 0.07, "rgba": (0.25, 0.4, 0.85, 1.0)},
+  # Blocks, for the shared tower: 4 x 4 x 2 cm slabs, one colour per arm.
+  "green_block": {"shape": "bar", "size": (0.02, 0.02, 0.01), "mass": 0.1, "rgba": (0.3, 0.7, 0.35, 1.0)},
+  "blue_block": {"shape": "bar", "size": (0.02, 0.02, 0.01), "mass": 0.1, "rgba": (0.25, 0.4, 0.85, 1.0)},
+  # Cubes, for the turntable: one colour per arm.
+  "green_cube": {"shape": "cube", "size": 0.015, "mass": 0.08, "rgba": (0.3, 0.7, 0.35, 1.0)},
+  "blue_cube": {"shape": "cube", "size": 0.015, "mass": 0.08, "rgba": (0.25, 0.4, 0.85, 1.0)},
+}
+"""The three kinds of part: a 3 cm red cube (a bracket), a blue cylinder 2.8 cm across and 3.5 cm tall standing on end
+(a bushing), and a yellow 3 x 5.2 x 2.4 cm block lying flat, its length along y (a spacer).  Half sizes, metres."""
+PART_FRICTION = (1.0, 0.02, 5e-4)
+"""Torsional friction (condim 4) so a part squeezed off-centre does not spin in the fingers."""
+
+
+def part_spec(name: str, kind: str) -> mujoco.MjSpec:
+  """One part, origin at its middle."""
+  spec, body = _root(name, free=True)
+  k = PART_KINDS[kind]
+  if k["shape"] == "cube":
+    body.add_geom(type=BOX, size=(k["size"],) * 3, mass=k["mass"], rgba=k["rgba"], friction=PART_FRICTION, condim=4)
+  elif k["shape"] == "cylinder":
+    body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=(k["size"][0], k["size"][1], 0), mass=k["mass"],
+                  rgba=k["rgba"], friction=PART_FRICTION, condim=4)
+  else:
+    body.add_geom(type=BOX, size=k["size"], mass=k["mass"], rgba=k["rgba"], friction=PART_FRICTION, condim=4)
+  return _stiffen(spec)
+
+
+def part_half_height(kind: str) -> float:
+  k = PART_KINDS[kind]
+  return k["size"] if k["shape"] == "cube" else k["size"][1] if k["shape"] == "cylinder" else k["size"][2]
+TURNTABLE = (0.15, 0.015)
+"""The turntable: radius, and its top's height above the table."""
+TURNTABLE_PEGS = (45.0, 135.0, -135.0, -45.0)
+"""Degrees round from the front: four pegs near the rim, two over each arm's half of the table, to turn it by."""
+PEG = (0.012, 0.03, 0.12)
+"""Each peg: radius, height, and how far out from the turntable's middle."""
+TURNTABLE_FRICTION = 0.3
+"""N m: what it takes to turn the turntable, so that it stays where it is left."""
+
+
+def turntable_spec() -> mujoco.MjSpec:
+  """A round turntable on a fixed foot, turning about the vertical, with four pegs standing near its rim."""
+  spec, body = _root("turntable", free=False)
+  body.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=(0.04, 0.003, 0), pos=(0, 0, 0.003), rgba=(0.3, 0.3, 0.32, 1.0))
+  disc = body.add_body(name="turntable_disc", pos=(0, 0, 0))
+  disc.add_joint(name="turntable_turn", type=mujoco.mjtJoint.mjJNT_HINGE, axis=(0, 0, 1), frictionloss=TURNTABLE_FRICTION,
+                 damping=0.5, armature=0.01)
+  r, top = TURNTABLE
+  disc.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=(r, (top - 0.006) / 2, 0), pos=(0, 0, 0.006 + (top - 0.006) / 2),
+                mass=0.5, rgba=(0.75, 0.6, 0.4, 1.0), friction=GRIP_FRICTION)
+  pr, ph, po = PEG
+  for deg in TURNTABLE_PEGS:
+    a = math.radians(deg)
+    disc.add_geom(type=mujoco.mjtGeom.mjGEOM_CYLINDER, size=(pr, ph / 2, 0), pos=(po * math.cos(a), po * math.sin(a), top + ph / 2),
+                  mass=0.02, rgba=(0.3, 0.3, 0.32, 1.0), friction=HANDLE_FRICTION, condim=4)
+  return spec
