@@ -75,6 +75,18 @@ out.
 
 Our run scored 0.5: in 3 minutes (150 requests of 24 rows each) Dream-1 spent most of the run over its mat, nudging its cubes, and near the end picked one up and carried it through the opening, below the wall's top, into the green tray; the other stayed on the mat. The other arm passed both its cylinders, and the arms never touched.
 
+## Third-party assets and licenses
+
+- `assets/yam_pro_linear_4310/`: the YAM Pro arm and linear_4310 gripper model (MJCF and STL meshes), from I2RT
+  Robotics' i2rt (https://github.com/i2rt-robotics/i2rt), copyright (c) I2RT Robotics, MIT License. The license text
+  and copyright notice are in `assets/yam_pro_linear_4310/LICENSE`; `assets/yam_pro_linear_4310/README.md` says what
+  was changed.
+- No other third-party files are included: everything else in this folder was written for this task, though some
+  numbers in it are taken from published sources: the arm's joint gains and limits from i2rt, and the YAM station's
+  camera calibration and request format from Dream Labs' SDK example (`cameras.py`, `dream_run.py`). The Python
+  packages it runs on (mjlab, MuJoCo, PyTorch, mediapy, Pillow and, for `dream_run.py` only, dreamlabs-client) are
+  installed from their own sources by `uv sync`, under their own licenses.
+
 ## Files
 
 - `task_env.py`: the task, the second arm in it, and the scoring.
@@ -84,4 +96,4 @@ Our run scored 0.5: in 3 minutes (150 requests of 24 rows each) Dream-1 spent mo
   screenshot and videos (not given to the policy).
 - `sim/`: the scene (`benchmark.py`, `props.py`), the YAM model with its controller (`robot.py`, `env_cfg.py`), the
   table (`scene.py`), inverse kinematics (`ik.py`), and the arms' script (`partner.py`).
-- `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt.
+- `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt (MIT License; see above).
