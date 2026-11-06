@@ -66,12 +66,29 @@ more runs, with every item and block moved up to 1 cm and the other arm starting
 
 ## Running Dream-1
 
-Not run. `dream_run.py` runs Dream-1 (`dreamlabs/dream-1-beta`) the way Dream Labs' YAM MuJoCo example does. Dream-1
-controls your arm, its rows for the other arm are ignored, and the prompt is the instruction in `task.json`.
+`dream_run.py` runs Dream-1 (`dreamlabs/dream-1-beta`) the way Dream Labs' YAM MuJoCo example does. Dream-1 controls
+your arm, its rows for the other arm are ignored, and the prompt is the instruction in `task.json`. It saves the run's
+video, its score and every action chunk Dream-1 returned (`dream_run/`), retries a dropped connection up to 3 times,
+and carries on if Dream Labs replaces an idle session.
 
     uv sync --extra dream
-    MUJOCO_GL=egl uv run python dream_run.py --out dream_run       # needs DREAM_API_KEY; uses credits
-    MUJOCO_GL=egl uv run python dream_run.py --dry-run             # checks the request; no API call
+    MUJOCO_GL=egl uv run python dream_run.py --key-file <file holding the key> --out dream_run   # uses credits
+    MUJOCO_GL=egl uv run python dream_run.py --dry-run                                         # no API call
+
+Our run scored 0.0: in the full 30 s (25 requests of 24 rows) Dream-1 put no block in the bin, one block was swept
+off, and the arms never touched.
+
+## Third-party assets and licenses
+
+- `assets/yam_pro_linear_4310/`: the YAM Pro arm and linear_4310 gripper model (MJCF and STL meshes), from I2RT
+  Robotics' i2rt (https://github.com/i2rt-robotics/i2rt), copyright (c) I2RT Robotics, MIT License. The license text
+  and copyright notice are in `assets/yam_pro_linear_4310/LICENSE`; `assets/yam_pro_linear_4310/README.md` says what
+  was changed.
+- No other third-party files are included: everything else in this folder was written for this task, though some
+  numbers in it are taken from published sources: the arm's joint gains and limits from i2rt, and the YAM station's
+  camera calibration and request format from Dream Labs' SDK example (`cameras.py`, `dream_run.py`). The Python
+  packages it runs on (mjlab, MuJoCo, PyTorch, mediapy, Pillow and, for `dream_run.py` only, dreamlabs-client) are
+  installed from their own sources by `uv sync`, under their own licenses.
 
 ## Files
 
@@ -83,5 +100,5 @@ controls your arm, its rows for the other arm are ignored, and the prompt is the
 - `sim/`: the scene and objects (`benchmark.py`, `props.py`), the YAM model and controller (`robot.py`,
   `env_cfg.py`), the table (`scene.py`), inverse kinematics (`ik.py`), and the scripts for the second arm and the demo
   (`partner.py`).
-- `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt.
+- `assets/`: the YAM Pro arm and linear_4310 gripper model, from i2rt (MIT License; see above).
 - `media/demo.mp4`: the demo run, scoring 1.0.

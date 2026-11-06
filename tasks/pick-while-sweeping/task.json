@@ -15,5 +15,5 @@
   "run_limit": "600 steps (30 s at 20 Hz). The other arm finishes by about 19 s, which leaves too little time to wait it out.",
   "reset_notes": "Put the blocks and clutter back, including anything on the floor. The other arm stands the broom back itself; if a run stops early, stand it back at its start.",
   "fidelity": "Approximate. The bristles are one solid block and every item is rigid. Arm links collide as capsules slightly larger than the real links, so a near miss under about 1 cm can count as a touch. The gripper squeezes with up to 50 N through flat pads. The controller uses the manufacturer's joint gains, gravity compensation and motor torque-speed limits. The other arm's routine is planned once from the fixed layout and replayed open loop.",
-  "scores": "Dream-1 run: not run; demo: 1.0"
+  "scores": "Dream-1 run: 0.0; demo: 1.0"
 }
