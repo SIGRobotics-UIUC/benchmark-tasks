@@ -10,3 +10,9 @@ moves with the rest when the entity is placed.
 
 Collision pads, the fitted link shells, actuators and gravity compensation are
 added in code (`sim/robot.py`); every mesh here is visual only.
+
+## Source and license
+
+The model and its meshes are I2RT Robotics' YAM Pro arm and linear_4310 gripper, from i2rt
+(https://github.com/i2rt-robotics/i2rt, `i2rt/robot_models`), copyright (c) I2RT Robotics, used under the MIT License.
+The license text, with the copyright notice, is in `LICENSE` in this folder. Our changes are the two edits above.

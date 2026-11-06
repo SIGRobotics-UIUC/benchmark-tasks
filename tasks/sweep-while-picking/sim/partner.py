@@ -22,7 +22,7 @@ from sim import props
 from sim.env_cfg import READY_JOINTS
 from sim.ik import ArmIk
 from sim.robot import GRASP_SITE
-from sim.scene import BASE_POSE, LEFT_ARM, TABLE_CENTER_X, TABLE_SIZE, world_to_base
+from sim.scene import BASE_POSE, EXTENSION, LEFT_ARM, LINE_Y, TABLE_CENTER_X, TABLE_SIZE, world_to_base
 
 START = (2.0, 2.0)
 """Seconds the picker waits before its first block (a range, for a seeded random start; fixed here)."""
@@ -61,8 +61,14 @@ def on_table(p: np.ndarray) -> bool:
   counts as on the table: never as cleared."""
   if not np.isfinite(p).all():
     return True
-  half_x, half_y = TABLE_SIZE[0] / 2, TABLE_SIZE[1] / 2
-  return bool(abs(p[0] - TABLE_CENTER_X) < half_x and abs(p[1]) < half_y and p[2] > b.Z - 0.02)
+  half_x = TABLE_SIZE[0] / 2
+  return bool(abs(p[0] - TABLE_CENTER_X) < half_x and -TABLE_SIZE[1] / 2 < p[1] < LINE_Y + EXTENSION
+              and p[2] > b.Z - 0.02)
+
+
+def cleared(p: np.ndarray) -> bool:
+  """An item is cleared once its middle is past the white line, on the table's extension."""
+  return bool(np.isfinite(p).all() and on_table(p) and p[1] > LINE_Y)
 
 
 def in_bin(p: np.ndarray) -> bool:
@@ -195,7 +201,7 @@ class Sweeper(Mover):
   only when the two arms will stay ``KEEP_OUT`` apart throughout it; sweeps again at any clutter left; then stands the
   broom back up.  It leaves the red blocks to Arm 1."""
 
-  BANDS = ((0.17, 0.08), (0.30, 0.08), (0.42, 0.08))
+  BANDS = ((0.17, 0.08), (0.30, 0.08), (0.42, 0.05))
   """(grip x, start y) of the strokes, one per band, over this arm's half of the table.  None nearer this arm's base
   than x = 0.17: the broom caught on it."""
   CLEARANCE = 0.010
@@ -204,8 +210,8 @@ class Sweeper(Mover):
   KEEP_OUT = 0.09
   """A stroke starts only if every point of this arm stays this far from every point of Arm 1 (link shells are about
   4 cm thick)."""
-  EDGE = TABLE_SIZE[1] / 2 + 0.02
-  """Strokes end with the broom's middle this far out: its front face 4.5 cm past the edge."""
+  EDGE = LINE_Y + 0.02
+  """Strokes end with the broom's middle this far out: its front face 4.5 cm past the white line."""
   PACE = 3.0
   """Seconds per metre of stroke."""
   LIFT = 0.04
@@ -306,8 +312,8 @@ class Sweeper(Mover):
     self.glide(READY_Q, 1.5, 1.0)
 
   def _left(self, env: ManagerBasedRlEnv, e: int) -> list[np.ndarray]:
-    """Clutter still on the table."""
-    return [pos(env, n, e) for n in b.CLUTTER_NAMES if on_table(pos(env, n, e))]
+    """Clutter on the table and not yet past the line."""
+    return [p for p in (pos(env, n, e) for n in b.CLUTTER_NAMES) if on_table(p) and not cleared(p)]
 
   def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
     if self.stage == "wait":
@@ -340,7 +346,7 @@ class Sweeper(Mover):
         self.stage = "done"
         return
       p = min(left, key=lambda p: p[1])  # The item farthest from the edge: sweeping it takes others with it.
-      self.todo.append((float(np.clip(p[0] - 0.06, 0.17, 0.48)), max(p[1] - 0.07, -0.12)))
+      self.todo.append((float(np.clip(p[0] - 0.03, 0.17, 0.48)), max(p[1] - 0.07, -0.12)))
       self.extra += 1
     # The first stroke Arm 1 is clear of; if none, wait parked and look again.
     for i, (x, y0) in enumerate(self.todo):

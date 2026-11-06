@@ -1,5 +1,5 @@
-"""The task: your YAM arm sweeps the clutter off the table with a hand broom while a second YAM arm picks red blocks
-out of it.
+"""The task: your YAM arm sweeps the clutter past a white line on its side of the table with a hand broom, while a
+second YAM arm picks red blocks out of it.
 
     from task_env import TaskEnv
     env = TaskEnv()
@@ -26,7 +26,7 @@ from sim import benchmark as b
 from sim.benchmark import make_sweep_cfg
 from sim.env_cfg import ACTION_SCALE, READY_JOINTS
 from sim.ik import ArmIk
-from sim.partner import Picker, on_table, pos
+from sim.partner import Picker, cleared, on_table, pos
 from sim.robot import ARM_JOINTS, FINGER_MAX, GRASP_SITE
 from sim.scene import LEFT_ARM, RIGHT_ARM
 
@@ -92,9 +92,9 @@ class TaskEnv:
     return None
 
   def cleared(self) -> tuple[int, int]:
-    """(clutter items off the table, clutter items).  The red blocks are Arm 1's: whether they are binned, left on the
-    table or swept off neither helps nor costs."""
-    return sum(not on_table(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES), len(b.CLUTTER_NAMES)
+    """(clutter items past the white line, clutter items).  The red blocks are Arm 1's: wherever they end up, they
+    neither help nor cost."""
+    return sum(cleared(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES), len(b.CLUTTER_NAMES)
 
   finished = None
   """Set by a driver (the demo) to a function saying the controlled arm has finished; otherwise the trial ends as soon
@@ -134,12 +134,12 @@ class TaskEnv:
     return self._obs()
 
   def score(self) -> dict:
-    """The share of the 6 clutter items off the table.  0 if the controlled arm or the broom ever touched Arm 1 or the
+    """The share of the 6 clutter items past the white line.  0 if the controlled arm or the broom ever touched Arm 1 or the
     block in its hand."""
     gone, counted = self.cleared()
     value = 0.0 if self.contact else gone / counted
     return {"score": round(value, 3), "items_gone": gone, "items_counted": counted,
-            "clutter_left": sum(on_table(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES),
+            "clutter_left": sum(not cleared(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES),
             "red_binned": sum(_binned(self.env, n) for n in b.BLOCK_NAMES),
             "red_swept_off": sum(not on_table(pos(self.env, n, 0)) for n in b.BLOCK_NAMES),
             "contact": self.contact, "steps": self.steps}
