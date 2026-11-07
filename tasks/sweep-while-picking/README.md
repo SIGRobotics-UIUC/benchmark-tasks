@@ -41,6 +41,8 @@ moves the same way in every trial.
 - Score = clutter items past the white line / 6. An item is past it when its centre is more than 45 cm from the
   middle toward your arm and it is still on the table. The table runs on 30 cm past the line, with a 3 cm lip
   around that part's open edges so nothing goes over them.
+- Clutter pushed past the line any other way, by your gripper say, counts the same: the score measures the cleared
+  work area, not the tool.
 - Red blocks don't count either way: binned by the other arm, left on the table or swept off, they neither earn nor
   cost you anything.
 - 0 if your arm or the broom touches the other arm or the block it's holding. The trial stops at the first touch.
