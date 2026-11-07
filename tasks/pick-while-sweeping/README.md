@@ -1,8 +1,8 @@
 # Pick blocks off a table while another robot arm sweeps it clear
 
 Your arm puts four red blocks in its bin. At the same time, a second YAM arm sweeps the table clear with a hand broom.
-The second arm works to a fixed routine: it won't wait or steer around you, and its strokes come down right on two
-of the blocks, so you have to get them clear of the broom in time and keep out of its way when it comes. The trial
+The second arm works to a fixed routine: it won't wait or steer around you, and its strokes run through two of the
+blocks, so you have to get them clear of the broom in time and keep out of its way when it comes. The trial
 lasts 30 seconds, so waiting for it to finish doesn't leave enough time. Touching the other arm or its broom scores 0.
 
 ## Running a trial
@@ -17,7 +17,7 @@ Needs Python 3.11 and [uv](https://docs.astral.sh/uv/). Uses a CUDA GPU if there
 
 On a Mac, leave out `MUJOCO_GL=egl`. Each command prints the score as JSON, for example:
 
-    {"score": 1.0, "red_binned": 4, "red_swept_off": 0, "clutter_left": 0, "contact": null, "steps": 575}
+    {"score": 1.0, "red_binned": 4, "red_swept": 0, "clutter_left": 0, "contact": null, "steps": 586}
 
 **Runtime:** about 1 to 2 minutes per trial on an M-series Mac CPU, mostly rendering the cameras.
 
@@ -38,19 +38,23 @@ moves the same way in every trial.
 
 ## Scoring
 
-- Score = red blocks resting in the bin / 4. Blocks swept off the table count as not binned.
+- Score = red blocks resting in the bin / 4, let go of: a block still within 3 cm of your grasp point doesn't count.
+  A block whose centre is past the middle of the white line, on the other arm's side, counts as not binned. The
+  table runs on 30 cm past that line, with a 3 cm lip around its open edges, so nothing is swept onto the floor.
 - 0 if your arm, or a block in your gripper (within 3 cm of the grasp point), touches the other arm or its broom. The
   trial stops at the first touch.
-- The trial ends at 600 steps, or earlier once every red block is in the bin or off the table and the other arm has
-  finished.
+- The trial ends at 600 steps, or earlier once every red block is resting in the bin or past the line and the other
+  arm has finished.
+
+In real trials, an operator stands by to stop both arms at the first touch; the broom moves at about 33 cm/s.
 
 ## The second arm
 
-`Sweeper` in `sim/partner.py`. It picks up the broom, makes one stroke toward its own edge through each 20 cm band of
+`Sweeper` in `sim/partner.py`. It picks up the broom, makes one stroke toward the line through each 20 cm band of
 the table, going straight from one to the next, and stands the broom back up, by about 19 s. Every move is planned
 when the trial starts, from the scene's fixed layout, and played on the same clock in every trial: it reads nothing
 from the scene while it runs, and never waits for or steers around your arm. Holding still scores 0.0: nothing goes in
-the bin, and the broom comes down on the two blocks in its path and shoves them several centimetres.
+the bin, and the broom sweeps the two blocks in its path, with all the clutter, past the line.
 
 ## The demo
 
@@ -58,11 +62,11 @@ the bin, and the broom comes down on the two blocks in its path and shoves them 
 simulator's true state, including where the other arm is about to move. It only shows the task can be done.
 
 First, before the broom's first stroke, it nudges the two blocks in the broom's path across to its own side with its
-closed fingers. Then it bins all four, starting each pick only when, by the other arm's fixed timetable, the whole
-pick and carry stays at least 12 cm (between the arms' centre lines) from the other arm and its broom; while it
-waits between picks, it backs off over its bin if the other arm comes that close. It scored 1.0 in 575 steps. In 8
-more runs, with every item and block moved up to 1 cm and the other arm starting up to 0.3 s early or late, it scored
-1.0 each time.
+closed fingers and lifts clear. Then it bins all four, the two it pushed first, starting each pick only when, by the
+other arm's fixed timetable, the whole pick and carry stays at least 12 cm (between the arms' centre lines) from the
+other arm and its broom; while it waits between picks, it backs off over its bin if the other arm comes that close. It
+scored 1.0 in 586 steps. In 8 more runs, with every item and block moved up to 1 cm and the other arm starting up to
+0.3 s early or late, it scored 1.0 each time.
 
 ## Running Dream-1
 
@@ -75,8 +79,8 @@ and carries on if Dream Labs replaces an idle session.
     MUJOCO_GL=egl uv run python dream_run.py --key-file <file holding the key> --out dream_run   # uses credits
     MUJOCO_GL=egl uv run python dream_run.py --dry-run                                         # no API call
 
-Our run scored 0.0: in the full 30 s (25 requests of 24 rows) Dream-1 put no block in the bin, one block was swept
-off, and the arms never touched.
+Our run scored 0.0: it ended at step 174 (8.7 s, 8 requests of 24 rows) when the two arms touched. By then Dream-1 had
+put no block in the bin, one block had been swept past the line and 3 pieces of clutter were still on the table.
 
 ## Third-party assets and licenses
 

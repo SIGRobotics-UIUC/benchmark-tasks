@@ -127,7 +127,7 @@ BIN_XY = (0.16, 0.34)
 """The controlled arm's bin, in its back corner of the table."""
 BROOM_XY = (0.22, -0.36)
 """Arm 1's broom, standing on its bristles, its length along x, on Arm 1's side."""
-RED_BLOCKS = ((0.20, -0.08), (0.32, -0.08), (0.40, 0.00), (0.15, -0.02))
+RED_BLOCKS = ((0.20, -0.10), (0.32, -0.10), (0.40, 0.02), (0.15, 0.02))
 """The four red blocks, all inside the area Arm 1 sweeps."""
 CLUTTER = (
   ("ball", 0.15, -0.21), ("paper", 0.18, -0.27), ("box", 0.26, -0.24),

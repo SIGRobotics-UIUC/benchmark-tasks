@@ -26,7 +26,7 @@ from sim import benchmark as b
 from sim.benchmark import make_pick_cfg
 from sim.env_cfg import ACTION_SCALE, READY_JOINTS
 from sim.ik import ArmIk
-from sim.partner import Sweeper, in_bin, on_table, pos
+from sim.partner import Sweeper, in_bin, on_table, pos, swept
 from sim.robot import ARM_JOINTS, FINGER_MAX, GRASP_SITE
 from sim.scene import LEFT_ARM, RIGHT_ARM
 
@@ -78,8 +78,7 @@ class TaskEnv:
       return "the arms touched"
     if self._found("broom_picker_contact"):
       return "the controlled arm touched the broom"
-    robot = self.env.scene[LEFT_ARM]
-    hand = (robot.data.site_pos_w[0, robot.site_names.index(GRASP_SITE)] - self.env.scene.env_origins[0]).cpu().numpy()
+    hand = self._hand()
     for name in b.BLOCK_NAMES:
       if np.linalg.norm(pos(self.env, name, 0) - hand) < HELD:
         if self._found(f"{name}_sweeper_contact"):
@@ -88,12 +87,22 @@ class TaskEnv:
           return "the block in the controlled arm's hand touched the broom"
     return None
 
+  def _hand(self) -> np.ndarray:
+    robot = self.env.scene[LEFT_ARM]
+    return (robot.data.site_pos_w[0, robot.site_names.index(GRASP_SITE)] - self.env.scene.env_origins[0]).cpu().numpy()
+
+  def _resting(self, name: str) -> bool:
+    """In the bin and let go: a block still within 3 cm of the grasp point is in the hand, not resting in the bin."""
+    p = pos(self.env, name, 0)
+    return bool(in_bin(p) and np.linalg.norm(p - self._hand()) >= HELD)
+
   def binned(self) -> int:
-    return sum(in_bin(pos(self.env, n, 0)) for n in b.BLOCK_NAMES)
+    return sum(self._resting(n) for n in b.BLOCK_NAMES)
 
   def _settled(self) -> bool:
-    """Every red block is in the bin or off the table: nothing left that could change the score."""
-    return all(in_bin(p) or not on_table(p) for p in (pos(self.env, n, 0) for n in b.BLOCK_NAMES))
+    """Every red block is resting in the bin, swept past the line or off the table: nothing left the arm can bin."""
+    return all(self._resting(n) or swept(pos(self.env, n, 0)) or not on_table(pos(self.env, n, 0))
+               for n in b.BLOCK_NAMES)
 
   finished = None
   """Set by a driver (the demo) to a function saying the controlled arm has finished."""
@@ -131,11 +140,11 @@ class TaskEnv:
     return self._obs()
 
   def score(self) -> dict:
-    """The share of the four red blocks in the bin.  0 if the controlled arm, or a block in its hand, ever touched Arm 1
+    """The share of the four red blocks resting in the bin, let go of.  0 if the controlled arm, or a block in its hand, ever touched Arm 1
     or its broom."""
     binned = self.binned()
     value = 0.0 if self.contact else binned / len(b.BLOCK_NAMES)
     return {"score": round(value, 3), "red_binned": binned,
-            "red_swept_off": sum(not on_table(pos(self.env, n, 0)) for n in b.BLOCK_NAMES),
-            "clutter_left": sum(on_table(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES),
+            "red_swept": sum(swept(pos(self.env, n, 0)) for n in b.BLOCK_NAMES),
+            "clutter_left": sum(not swept(pos(self.env, n, 0)) for n in b.CLUTTER_NAMES),
             "contact": self.contact, "steps": self.steps}

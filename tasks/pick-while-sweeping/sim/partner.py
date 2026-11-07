@@ -21,7 +21,7 @@ from sim import props
 from sim.env_cfg import READY_JOINTS
 from sim.ik import ArmIk
 from sim.robot import GRASP_SITE
-from sim.scene import BASE_POSE, LEFT_ARM, TABLE_CENTER_X, TABLE_SIZE, world_to_base
+from sim.scene import BASE_POSE, EXTENSION, LEFT_ARM, LINE_Y, TABLE_CENTER_X, TABLE_SIZE, world_to_base
 
 READY_Q = np.array(list(READY_JOINTS.values()))
 LEAN = props.HANDLE_TILT
@@ -58,8 +58,14 @@ def on_table(p: np.ndarray) -> bool:
   counts as on the table: never as cleared."""
   if not np.isfinite(p).all():
     return True
-  half_x, half_y = TABLE_SIZE[0] / 2, TABLE_SIZE[1] / 2
-  return bool(abs(p[0] - TABLE_CENTER_X) < half_x and abs(p[1]) < half_y and p[2] > b.Z - 0.02)
+  half_x = TABLE_SIZE[0] / 2
+  return bool(abs(p[0] - TABLE_CENTER_X) < half_x and LINE_Y - EXTENSION < p[1] < TABLE_SIZE[1] / 2
+              and p[2] > b.Z - 0.02)
+
+
+def swept(p: np.ndarray) -> bool:
+  """Past the white line, on the table's extension on Arm 1's side: where its broom sweeps things."""
+  return bool(np.isfinite(p).all() and on_table(p) and p[1] < LINE_Y)
 
 
 def in_bin(p: np.ndarray) -> bool:
@@ -143,14 +149,14 @@ class Sweeper(Mover):
   to the next; then stands the broom back up.  Planned once from the fixed layout and replayed open loop: it reads
   nothing from the scene and acts as if the other arm weren't there."""
 
-  BANDS = ((0.17, 0.08), (0.30, 0.08), (0.42, 0.08))
+  BANDS = ((0.17, 0.045), (0.30, 0.045), (0.42, 0.045))
   """(grip x, start y) of the strokes, one per band, over this arm's half of the table; y is toward this arm.  None
   nearer this arm's base than x = 0.17: the broom caught on it."""
   CLEARANCE = 0.010
   """The bristles' tips ride this far above the table: every item is at least 3 cm tall, and bristles dragging on the
   table caught at its edge and twisted the broom out of the hand."""
-  EDGE = TABLE_SIZE[1] / 2 + 0.02
-  """Strokes end with the broom's middle this far out: its front face 4.5 cm past the edge."""
+  EDGE = -LINE_Y + 0.02
+  """Strokes end with the broom's middle this far out: its front face 4.5 cm past the white line."""
   PACE = 3.0
   """Seconds per metre of stroke."""
   LIFT = 0.08
@@ -251,7 +257,7 @@ class Picker(Mover):
 
   LANE = -0.05
   """A block nearer Arm 1's side than this (y, toward Arm 1 negative) is in a broom stroke's path: Arm 1's strokes start
-  with the broom's middle at y = -0.08, coming down onto any block there."""
+  with the broom's middle at y = -0.045, its front face at -0.07, just behind any block there."""
   PUSH_AT = 1.3
   """Seconds in when the pushes start: by then Arm 1 has swung out toward its broom, clear of this arm's way in."""
   SAFE = 0.09
@@ -273,6 +279,8 @@ class Picker(Mover):
       self.line(behind, ahead, 0.7, 0.0)
       self.line(ahead, ahead + [0, 0, 0.06], 0.2, 0.0)
       self.log.append(f"pushing the block at {np.round(p[:2], 3).tolist()} out of the broom's path")
+    # Then up and across to this arm's side, clear of the broom's first stroke coming in.
+    self.glide(self.solve([0.22, self.side * 0.18, b.Z + 0.16]), 0.6, 1.0)
 
   def _pick(self, env: ManagerBasedRlEnv, e: int, name: str) -> list[tuple[np.ndarray, float]] | None:
     """The rows taking ``name`` into the bin, or None if the arm can't reach it."""
@@ -338,10 +346,12 @@ class Picker(Mover):
     if self.stage != "next" or now < 0.1:  # Until the simulation has stepped, poses are not yet read back.
       return
     if not self.ordered:
-      # The two deep in Arm 1's side first, nearest the bases first, then the two near the middle.
-      self.todo.sort(key=lambda n: (round(self.side * pos(env, n, e)[1], 2), pos(env, n, e)[0]))
+      # Farthest from Arm 1's strokes first (the two just pushed clear), nearest the bases first; the two near the
+      # middle, beside the strokes, once the broom has gone.
+      self.todo.sort(key=lambda n: (-round(self.side * pos(env, n, e)[1], 2), pos(env, n, e)[0]))
       self.ordered = True
-    self.todo = [n for n in self.todo if on_table(pos(env, n, e)) and not in_bin(pos(env, n, e))]
+    self.todo = [n for n in self.todo
+                 if on_table(pos(env, n, e)) and not in_bin(pos(env, n, e)) and not swept(pos(env, n, e))]
     if not self.todo:
       # Done: wait high over the bin, out of the way.
       self.rot = leaned((0.0, 1.0, 0.0))
