@@ -52,11 +52,6 @@ class ArmIk:
     mujoco.mj_kinematics(self.model, self.data)
     mujoco.mj_comPos(self.model, self.data)
 
-  def rotation(self, q: np.ndarray) -> np.ndarray:
-    """The grasp site's orientation, in the arm's base frame, at joints ``q``."""
-    self._set(q)
-    return self.data.site_xmat[self.site].reshape(3, 3).copy()
-
   def in_table(self, q: np.ndarray) -> bool:
     self._set(q)
     mujoco.mj_collision(self.model, self.data)

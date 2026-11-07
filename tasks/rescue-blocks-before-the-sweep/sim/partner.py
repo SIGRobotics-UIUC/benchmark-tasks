@@ -1,24 +1,17 @@
-"""The second arm's routine, and the script the demonstration runs.  Both read the scene's layout; the
-demonstration's script also reads the scene's true state.
+"""The scripted arms: Arm 1 on a fixed, open-loop routine; the demonstration reading the scene's true state.
 
-    worker = Worker("right_arm", ik, rng, dt)     # the second arm
-    helper = Helper("left_arm", ik, rng, dt)      # the demonstration, on the controlled arm
-    row = worker.act(env, e, now)                 # every step: 6 joint targets (rad) and the gripper, 0 closed to 1 open
+    arm = Sweeper(arm, ik, dt)            # Arm 1: sweeps the table clear (the task's other arm)
+    arm = Picker(arm, ik, dt, sweeper)    # the demonstration: puts the red blocks in the bin, out of Arm 1's way
+    row = arm.act(env, e, now)            # every step: 6 joint targets (rad) and the gripper, 0 closed to 1 open
 
-``Worker`` is a fixed routine (``Routine`` or ``PushRoutine``): every move it makes is planned when it is made, from the
-scene's fixed layout, and played out on the same clock in every trial.  It reads nothing from the scene while it runs: it
-does not wait for the other arm, does not look to see whether anything is where it expects, and does not back off.
-
-``Worker`` sweeps the five lanes onto the grey patch on its side, nearest first, one every 10 s from 12 s in, whatever is in them.
-
-``Helper``, the demonstration: a ``Picker`` that takes the red blocks still in the clutter, the one whose lane is swept soonest first; it waits while the worker's hand is near, or while by its timetable the worker will reach across a lane near the block before the block could be lifted out."""
+The sweeper is open loop, planned once from the fixed layout and the same in every trial, never waiting or keeping
+clear: it picks up the broom, makes one stroke toward its own side edge through each band of the table, going straight
+from one to the next, and stands the broom back up.  The picker nudges the blocks in the broom's path out of it, then
+takes the red blocks to its bin one at a time, starting each pick only when the sweeper's timetable leaves room."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 import numpy as np
-import torch
 
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.utils.lab_api.math import quat_apply
@@ -27,14 +20,13 @@ from sim import benchmark as b
 from sim import props
 from sim.env_cfg import READY_JOINTS
 from sim.ik import ArmIk
-from sim.robot import FINGER_MAX, GRASP_SITE
-from sim.scene import LEFT_ARM, world_to_base
-from typing import Callable
+from sim.robot import GRASP_SITE
+from sim.scene import BASE_POSE, EXTENSION, LEFT_ARM, LINE_Y, TABLE_CENTER_X, TABLE_SIZE, world_to_base
 
-from sim.scene import BASE_POSE
-
-START = (0.0, 4.0)
 READY_Q = np.array(list(READY_JOINTS.values()))
+LEAN = props.HANDLE_TILT
+"""Both arms hold their hands leaning forward by this much, about the jaw: fingers straight down, the YAM reaches only
+the near half of the table."""
 
 
 def turn(axis, degrees: float) -> np.ndarray:
@@ -61,11 +53,44 @@ def site(env: ManagerBasedRlEnv, entity: str, name: str, e: int) -> np.ndarray:
   return (thing.data.site_pos_w[e, thing.site_names.index(name)] - env.scene.env_origins[e]).cpu().numpy()
 
 
+def on_table(p: np.ndarray) -> bool:
+  """A point is over the table top and not fallen below it.  A position that is not finite (the simulation blew up)
+  counts as on the table: never as cleared."""
+  if not np.isfinite(p).all():
+    return True
+  half_x = TABLE_SIZE[0] / 2
+  return bool(abs(p[0] - TABLE_CENTER_X) < half_x and LINE_Y - EXTENSION < p[1] < TABLE_SIZE[1] / 2
+              and p[2] > b.Z - 0.02)
+
+
+def swept(p: np.ndarray) -> bool:
+  """Past the white line, on the table's extension on Arm 1's side: where its broom sweeps things."""
+  return bool(np.isfinite(p).all() and on_table(p) and p[1] < LINE_Y)
+
+
+def in_bin(p: np.ndarray) -> bool:
+  if not np.isfinite(p).all():
+    return False
+  ix, iy, h, _ = props.BIN
+  return bool(abs(p[0] - b.BIN_XY[0]) < ix / 2 and abs(p[1] - b.BIN_XY[1]) < iy / 2 and p[2] < b.Z + h + 0.03)
+
+
+def block_yaw(env: ManagerBasedRlEnv, name: str, e: int) -> float:
+  q = env.scene[name].data.root_link_quat_w[e:e + 1]
+  x = quat_apply(q, q.new_tensor([[1.0, 0.0, 0.0]]))[0].cpu().numpy()
+  return float(np.arctan2(x[1], x[0]))
+
+
+def leaned(jaw: tuple[float, float, float]) -> np.ndarray:
+  """Fingers leaning ``LEAN`` forward of straight down, about the jaw (closing direction) along the horizontal ``jaw``."""
+  return turn(jaw, -LEAN) @ plumb(jaw)
+
+
 class Mover:
   """A queue of (joint targets, gripper) rows, refilled stage by stage."""
 
-  def __init__(self, arm: str, ik: ArmIk, rng: np.random.Generator, dt: float) -> None:
-    self.arm, self.ik, self.rng, self.dt = arm, ik, rng, dt
+  def __init__(self, arm: str, ik: ArmIk, dt: float) -> None:
+    self.arm, self.ik, self.dt = arm, ik, dt
     self.side = 1.0 if arm == LEFT_ARM else -1.0
     self.q = READY_Q.copy()
     self.current = READY_Q.copy()
@@ -73,7 +98,6 @@ class Mover:
     self.queue: list[tuple[np.ndarray, float]] = []
     self.rot = plumb((0.0, 1.0, 0.0))
     self.stage = "wait"
-    self.start = rng.uniform(*START)
     self.log: list[str] = []
     self.failed = None
 
@@ -120,502 +144,280 @@ class Mover:
     return np.r_[self.current, self.grip]
 
 
-FIRST = (0.0, 3.0)
-"""Seconds before it starts, drawn per episode."""
-RETRY = (0.3, 1.5)
-"""Seconds before it looks again, when the shared area was busy or it backed off."""
-NEAR = 0.10
-"""It leaves alone an object the other gripper is this close to."""
-CARRY = 0.12
-"""Height above the table it carries things at."""
-LEAN = 10.0
-"""Degrees the fingers lean away from the arm's base: held plumb, joint 4 is on its limit across most of the table."""
-OPEN = 0.6
-"""Gripper opening while reaching for a part: wide enough for a 3 cm part, narrow enough to miss its neighbours."""
-SETTLE = 0.5
-"""Seconds it waits at the bottom, fingers open, before closing."""
+class Sweeper(Mover):
+  """Arm 1: picks up the broom and sweeps toward its own side edge, one band at a time, going straight from one stroke
+  to the next; then stands the broom back up.  Planned once from the fixed layout and replayed open loop: it reads
+  nothing from the scene and acts as if the other arm weren't there."""
+
+  BANDS = ((0.17, 0.045), (0.30, 0.045), (0.42, 0.045))
+  """(grip x, start y) of the strokes, one per band, over this arm's half of the table; y is toward this arm.  None
+  nearer this arm's base than x = 0.17: the broom caught on it."""
+  CLEARANCE = 0.010
+  """The bristles' tips ride this far above the table: every item is at least 3 cm tall, and bristles dragging on the
+  table caught at its edge and twisted the broom out of the hand."""
+  EDGE = -LINE_Y + 0.02
+  """Strokes end with the broom's middle this far out: its front face 4.5 cm past the white line."""
+  PACE = 3.0
+  """Seconds per metre of stroke."""
+  LIFT = 0.08
+  """How high the bristles come straight down onto the table from, at the start of a stroke, and go up at its end: with
+  less, the move straight on to the next stroke dipped and knocked blocks about."""
+
+  def __init__(self, arm: str, ik: ArmIk, dt: float) -> None:
+    super().__init__(arm, ik, dt)
+    self.rot = leaned((0.0, 1.0, 0.0))  # The jaw across the grip, the broom's length along x.
+
+  def _start(self, x: float, y0: float) -> np.ndarray:
+    low = b.Z + props.GRIP_HEIGHT + self.CLEARANCE
+    for y in np.arange(y0, 0.36, 0.02):
+      start = np.array([x, self.side * y, low])
+      try:
+        self.solve(start + [0, 0, self.LIFT])
+        self.solve(start)
+      except RuntimeError:
+        continue
+      return start
+    raise RuntimeError(f"no reachable start at x={x:.2f}")
+
+  def _stroke(self, start: np.ndarray) -> None:
+    end = np.array([start[0], self.side * self.EDGE, start[2]])
+    self.glide(self.solve(start + [0, 0, self.LIFT]), 1.2, 0.0)
+    self.line(start + [0, 0, self.LIFT], start, 0.5, 0.0)
+    self.line(start, end, self.PACE * abs(end[1] - start[1]), 0.0)
+    self.line(end, end + [0, 0, self.LIFT], 0.4, 0.0)
+
+  def _grab(self) -> None:
+    """Take the broom by its grip, at its fixed starting spot."""
+    grip = np.array([*b.BROOM_XY, b.Z + props.GRIP_HEIGHT])
+    above = grip + [0, 0, 0.08]
+    self.glide(self.solve(above), 1.5, 1.0)
+    self.line(above, grip, 0.8, 1.0)
+    self.hold(0.6, 0.0)
+    self.line(grip, grip + [0, 0, 0.08], 0.8, 0.0)
+
+  def _put_back(self) -> None:
+    """Stand the broom back where it started, let go, and go to the ready pose."""
+    spot = np.array([*b.BROOM_XY, b.Z + props.GRIP_HEIGHT + 0.004])
+    self.glide(self.solve(spot + [0, 0, 0.06]), 1.5, 0.0)
+    self.line(spot + [0, 0, 0.06], spot, 0.8, 0.0)
+    self.hold(0.6, 1.0)
+    self.line(spot, spot + [0, 0, 0.08], 0.8, 1.0)
+    self.glide(READY_Q, 1.5, 1.0)
+
+  def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
+    """The whole routine, planned once from the fixed layout: it reads nothing from the scene."""
+    if self.stage != "wait" or now < 0.5:
+      return
+    self._grab()
+    for x, y0 in self.BANDS:
+      start = self._start(x, y0)
+      self.log.append(f"stroke at x={x:.2f} from y={start[1]:.2f}")
+      self._stroke(start)  # Straight on to the next: it never waits for, or keeps clear of, the other arm.
+    self._put_back()
+    self.stage = "done"
+
+
+def arm_points(ik: ArmIk, q: np.ndarray, arm: str, broom: bool = False) -> np.ndarray:
+  """Points along an arm at joints ``q``: each link's origin, three points between each pair, and the grasp point; with
+  ``broom``, also points over the broom it holds (20 cm along x, its back 5 to 8 cm below the grip)."""
+  ik._set(q)
+  data, model = ik.data, ik.model
+  chain = [data.xpos[model.body(n).id] for n in ("link2", "link3", "link4", "link5", "link6", "gripper")]
+  grasp = data.site_xpos[ik.site].copy()
+  chain.append(grasp)
+  chain += [u + (v - u) * f for u, v in zip(chain[:-1], chain[1:]) for f in (0.25, 0.5, 0.75)]
+  if broom:
+    chain += [grasp + [dx, 0.0, dz] for dx in np.linspace(-0.10, 0.10, 5) for dz in (-0.05, -0.08)]
+  return np.array(chain) + np.array(BASE_POSE[arm][0])
 
 
 class Picker(Mover):
-  def __init__(self, arm: str, ik, rng: np.random.Generator, dt: float,
-               wanted: Callable[[ManagerBasedRlEnv, int], list[str]],
-               drop: Callable[[ManagerBasedRlEnv, int, str], np.ndarray],
-               busy: Callable[[np.ndarray], bool],
-               grasp_height: Callable[[str], float] = lambda name: 0.0,
-               square: Callable[[str], bool] = lambda name: True,
-               drop_busy: Callable[[np.ndarray, np.ndarray], bool] = lambda other_site, spot: False,
-               carry: float = CARRY, correct: bool = False, place_settle: float = 0.0,
-               plumb_drop: bool = False, through: Callable[[np.ndarray], np.ndarray] | None = None,
-               via_ready: bool = False, keep_jaw: bool = False, approach: float = 0.10, opening: float = OPEN) -> None:
-    super().__init__(arm, ik, rng, dt)
-    self.wanted, self.drop, self.busy, self.grasp_height = wanted, drop, busy, grasp_height
-    self.target_square, self.drop_busy, self.carry = square, drop_busy, carry
-    # ``correct``: stop over the drop, see where the part sits in the hand and lower it so the part, not the hand, lands
-    # on the spot.  ``place_settle``: seconds to wait at the bottom, still holding, before letting go.
-    self.correct, self.place_settle = correct, place_settle
-    # ``plumb_drop``: let go with the fingers straight down wherever that is within reach, at any height: a leaning
-    # hand, opening, pushes the part sideways.
-    self.plumb_drop = plumb_drop
-    # ``through(spot)``: a point on this side of an opening the part must pass through to reach ``spot``.  The part is
-    # carried to that point, then straight through the opening to the drop, and the hand comes back the same way.
-    self.through = through
-    # ``via_ready``: after a drop, go to the next part by way of ready, high and clear, not straight across in joint
-    # space, which can sweep the hand low through what was just put down.
-    self.via_ready = via_ready
-    # ``keep_jaw``: carry the part without turning the wrist, but for a half turn, so that it is put down lying the way
-    # it lay when picked.
-    self.keep_jaw = keep_jaw
-    self.approach = approach
-    self.opening = opening
-    """Gripper opening while reaching for a part."""
-    """How far above the part the hand starts its straight descent, and lifts it to."""
-    self.release_rows = 0
-    self.other = "right_arm" if arm == "left_arm" else "left_arm"
-    self.start = rng.uniform(*FIRST)
-    self.target = None
-    self.placed: list[str] = []
-    self.backoffs = 0
+  """The demonstration: first nudges the blocks in the broom's path out of it, then puts the red blocks, one by one, in
+  the bin.  It knows Arm 1's fixed timetable: it starts a pick only if the whole pick and carry stays ``KEEP_OUT`` from
+  Arm 1 and its broom, and while waiting between picks it gets out of the way over its bin when Arm 1 comes close.  If
+  the broom moves the block it is reaching for before the gripper closes, it backs off and goes for the next."""
 
-  def _jaw(self, env: ManagerBasedRlEnv, e: int, name: str) -> tuple[float, float, float]:
-    """Across the object's shorter side, turned to suit this arm."""
-    q = env.scene[name].data.root_link_quat_w[e:e + 1]
-    x = quat_apply(q, q.new_tensor([[1.0, 0.0, 0.0]]))[0].cpu().numpy()
-    y = quat_apply(q, q.new_tensor([[0.0, 1.0, 0.0]]))[0].cpu().numpy()
-    # Along the object's x: across a bar whose length is its y; any way does for a cube or an upright cylinder.
-    jaw = x[:2] / max(np.linalg.norm(x[:2]), 1e-6)
-    if abs(y[2]) > 0.7:  # Its long side stands up: any horizontal jaw.
-      jaw = np.array([1.0, 0.0])
-    if jaw[0] * self.side < 0:
-      jaw = -jaw
-    return (float(jaw[0]), float(jaw[1]), 0.0)
+  CARRY = 0.15
+  """Height above the table at which a block is carried and dropped over the bin."""
+  MOVED = 0.02
+  """A block that has moved this far since the reach began has been taken by the broom."""
+  KEEP_OUT = 0.12
+  """Between points on the two arms' centre lines: the link shells and the gripper's width take up most of it."""
+  SOON = 0.6
+  """Seconds ahead it looks, along both arms' planned motion, for Arm 1 coming."""
 
-  def _long_axis(self, env: ManagerBasedRlEnv, e: int, name: str) -> np.ndarray:
-    q = env.scene[name].data.root_link_quat_w[e:e + 1]
-    return quat_apply(q, q.new_tensor([[0.0, 1.0, 0.0]]))[0].cpu().numpy()
+  def __init__(self, arm: str, ik: ArmIk, dt: float, sweeper: Sweeper) -> None:
+    super().__init__(arm, ik, dt)
+    self.sweeper = sweeper
+    self.reaching = 0
+    self.todo = list(b.BLOCK_NAMES)
+    self.holding: str | None = None
+    self.stage = "push"
+    self.ordered = False
 
-  def lean_rot(self, jaw, point, lean: float) -> np.ndarray:
-    """Fingers down, the jaw along ``jaw``, leaning ``lean`` degrees about the jaw, the fingertips away from the base."""
-    base = np.array(BASE_POSE[self.arm][0][:2])
-    radial = np.asarray(point[:2]) - base
-    best = None
-    for sign in (1.0, -1.0):
-      rot = turn(jaw, sign * lean) @ plumb(jaw)
-      score = float(rot[:2, 2] @ radial)
-      if best is None or score > best[0]:
-        best = (score, rot)
-    return best[1]
+  LANE = -0.05
+  """A block nearer Arm 1's side than this (y, toward Arm 1 negative) is in a broom stroke's path: Arm 1's strokes start
+  with the broom's middle at y = -0.045, its front face at -0.07, just behind any block there."""
+  PUSH_AT = 1.3
+  """Seconds in when the pushes start: by then Arm 1 has swung out toward its broom, clear of this arm's way in."""
+  SAFE = 0.09
+  """Where a block in a stroke's path is pushed to (y): out of every stroke's path, clear of the blocks already there."""
 
-  def holding(self, env: ManagerBasedRlEnv, e: int) -> bool:
-    if self.target is None:
-      return False
-    robot = env.scene[self.arm]
-    fingers = float(robot.data.joint_pos[e, robot.joint_names.index("joint7")])
-    return np.linalg.norm(pos(env, self.target, e) - site(env, self.arm, GRASP_SITE, e)) < 0.04 and fingers < 0.8 * FINGER_MAX
+  def _push_out(self, env: ManagerBasedRlEnv, e: int) -> None:
+    """Nudge every block in a broom stroke's path out of it, across toward this arm's side, with the closed fingers,
+    nearest the bases first.  Arm 1's first stroke comes down about 5.5 s in; picking both blocks takes far longer."""
+    self.rot = leaned((0.0, 1.0, 0.0))
+    z = b.Z + 0.022
+    blocks = sorted((pos(env, n, e) for n in b.BLOCK_NAMES), key=lambda p: p[0])
+    for p in blocks:
+      if self.side * p[1] > self.LANE:
+        continue
+      behind = np.array([p[0], p[1] - self.side * 0.040, z])
+      ahead = np.array([p[0], self.side * self.SAFE - self.side * 0.020, z])
+      self.glide(self.solve(behind + [0, 0, 0.06]), 0.7, 0.0)
+      self.line(behind + [0, 0, 0.06], behind, 0.25, 0.0)
+      self.line(behind, ahead, 0.7, 0.0)
+      self.line(ahead, ahead + [0, 0, 0.06], 0.2, 0.0)
+      self.log.append(f"pushing the block at {np.round(p[:2], 3).tolist()} out of the broom's path")
+    # Then up and across to this arm's side, clear of the broom's first stroke coming in.
+    self.glide(self.solve([0.22, self.side * 0.18, b.Z + 0.16]), 0.6, 1.0)
+
+  def _pick(self, env: ManagerBasedRlEnv, e: int, name: str) -> list[tuple[np.ndarray, float]] | None:
+    """The rows taking ``name`` into the bin, or None if the arm can't reach it."""
+    p = pos(env, name, e)
+    # The jaw across the block's faces, whichever pair is nearest across the table (y).
+    yaw = block_yaw(env, name, e)
+    yaw = (yaw + np.pi / 4) % (np.pi / 2) - np.pi / 4
+    q0, queue0 = self.q.copy(), self.queue
+    self.queue = []
+    try:
+      grasp = p + [0.0, 0.0, 0.010]  # Any lower, and at full reach the leaning fingers pressed on the table.
+      jaw = (-np.sin(yaw), np.cos(yaw), 0.0)
+      # Leaning forward reaches the far table; a block pushed in close to this arm's base needs the fingers plumb.
+      for self.rot, rise in [(r, h) for r in (leaned(jaw), plumb(jaw)) for h in (0.10, 0.08, 0.06)]:
+        above = grasp + [0, 0, rise]
+        try:
+          q_above = self.solve(above)
+          self.solve(grasp)
+        except RuntimeError:
+          continue
+        break
+      else:
+        return None
+      self.glide(q_above, 1.2, 1.0)
+      self.line(above, grasp, 0.8, 1.0)  # Any faster, and the fingers caught the cube's edge.
+      self.reach = len(self.queue)  # Rows until the gripper starts to close.
+      self.hold(0.7, 0.0)  # The gripper takes about that long to close.
+      self.line(grasp, above, 0.8, 0.0)
+      self.rot = leaned((0.0, 1.0, 0.0))
+      # Each block to its own spot in the bin, so they don't stack; the bin's middle if the arm can't reach the spot.
+      spot = [(0.04, 0.035), (0.04, -0.035), (0.0, 0.035), (0.0, -0.035)][b.BLOCK_NAMES.index(name) % 4]
+      try:
+        q = self.solve([b.BIN_XY[0] + spot[0], b.BIN_XY[1] + spot[1], b.Z + self.CARRY])
+      except RuntimeError:
+        q = self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + self.CARRY])
+      self.glide(q, 1.4, 0.0)  # Any faster, and the block slipped out.
+      self.hold(0.8, 1.0)  # Time to open and for the block to land.
+      return self.queue
+    except RuntimeError:
+      return None
+    finally:
+      self.queue, self.q = queue0, q0
+
+  def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
+    if self.stage == "push":
+      if now < self.PUSH_AT:
+        return
+      self._push_out(env, e)
+      self.stage = "pushing"  # Not interrupted: the pushes are timed to finish before Arm 1's first stroke.
+      return
+    if self.stage == "pushing":
+      self.stage = "next"
+      return
+    if self.stage == "retreat":
+      self.stage = "next"
+      return
+    if self.stage == "carry":
+      if not in_bin(pos(env, self.holding, e)):
+        self.log.append(f"t={now:.1f}: lost {self.holding}")
+      self.holding = None
+      self.stage = "next"
+      return
+    if self.stage != "next" or now < 0.1:  # Until the simulation has stepped, poses are not yet read back.
+      return
+    if not self.ordered:
+      # Farthest from Arm 1's strokes first (the two just pushed clear), nearest the bases first; the two near the
+      # middle, beside the strokes, once the broom has gone.
+      self.todo.sort(key=lambda n: (-round(self.side * pos(env, n, e)[1], 2), pos(env, n, e)[0]))
+      self.ordered = True
+    self.todo = [n for n in self.todo
+                 if on_table(pos(env, n, e)) and not in_bin(pos(env, n, e)) and not swept(pos(env, n, e))]
+    if not self.todo:
+      # Done: wait high over the bin, out of the way.
+      self.rot = leaned((0.0, 1.0, 0.0))
+      self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + 0.20]), 1.5, 1.0)
+      self.stage = "done"
+      return
+    # The first block, in order, whose whole pick and carry stay clear of Arm 1's planned motion; if none, wait.
+    for name in list(self.todo):
+      rows = self._pick(env, e, name)
+      if rows is None:
+        self.log.append(f"t={now:.1f}: cannot reach {name}; skipping it")
+        self.todo.remove(name)
+        return
+      if self._clear(env, e, rows):
+        break
+    else:
+      self.hold(0.2, self.grip)
+      return
+    self.todo.remove(name)
+    self.log.append(f"t={now:.1f}: taking {name}")
+    self.queue += rows
+    self.q = rows[-1][0]
+    self.holding, self.target, self.reaching = name, pos(env, name, e), self.reach
+    self.stage = "carry"
+
+  def _clear(self, env: ManagerBasedRlEnv, e: int, rows) -> bool:
+    """Whether this arm, following ``rows``, stays ``KEEP_OUT`` from Arm 1 and its broom along Arm 1's planned motion,
+    time for time."""
+    other = self.sweeper
+    for k in range(0, len(rows), 4):
+      i = int(round(k * self.dt / other.dt))
+      theirs = other.queue[min(i, len(other.queue) - 1)][0] if other.queue else other.current
+      a = arm_points(self.ik, theirs, other.arm, broom=True)
+      m = arm_points(self.ik, rows[k][0], self.arm)
+      if np.linalg.norm(m[:, None] - a[None], axis=-1).min() < self.KEEP_OUT:
+        return False
+    return True
+
+  def _coming(self, env: ManagerBasedRlEnv, e: int) -> bool:
+    """Whether Arm 1 or its broom comes within ``KEEP_OUT`` of this arm over the next ``SOON`` seconds."""
+    other = self.sweeper
+    theirs = [env.scene[other.arm].data.joint_pos[e, :6].cpu().numpy()]
+    theirs += [q for q, _ in other.queue[:int(self.SOON / other.dt):5]]
+    ours = [env.scene[self.arm].data.joint_pos[e, :6].cpu().numpy()]
+    ours += [q for q, _ in self.queue[:int(self.SOON / self.dt):3]]
+    a = np.concatenate([arm_points(self.ik, q, other.arm, broom=True) for q in theirs])
+    m = np.concatenate([arm_points(self.ik, q, self.arm) for q in ours])
+    return np.linalg.norm(m[:, None] - a[None], axis=-1).min() < self.KEEP_OUT
 
   def act(self, env: ManagerBasedRlEnv, e: int, now: float) -> np.ndarray:
-    if self.stage == "approach" and self.queue and self.busy(site(env, self.other, GRASP_SITE, e)):
-      # The other gripper came into the shared area on our way in: back off from where we are, try again later.
+    if self.stage == "next" and self._coming(env, e):  # A pick under way was checked against the timetable.
+      # Out of the way: up and over the bin, letting go of any block.
+      self.log.append(f"t={now:.1f}: Arm 1 coming; getting out of the way")
+      if self.holding is not None:
+        self.todo.append(self.holding)
       self.queue.clear()
-      self.q = self.current.copy()
-      self.glide(READY_Q, 0.8, 1.0)
-      self.stage, self.backoffs = "backoff", self.backoffs + 1
-    elif ((self.stage == "over" or self.stage == "placed" and len(self.queue) > self.release_rows) and self.queue
-          and self.drop_busy(site(env, self.other, GRASP_SITE, e), self.spot)):
-      # The other gripper came to the drop on our way there: take the part back to where it was lifted, try again.
-      self.queue.clear()
-      self.q = self.current.copy()
-      self.rot = self.lift_rot
-      self.glide(self.lift_q, 1.0, 0.0)
-      self.stage, self.backoffs = "lifted", self.backoffs + 1
+      self.q, self.reaching, self.holding, self.stage = self.current.copy(), 0, None, "retreat"
+      self.rot = leaned((0.0, 1.0, 0.0))
+      self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + 0.20]), 1.2, 1.0)
+    if self.reaching:
+      self.reaching -= 1
+      if np.linalg.norm(pos(env, self.holding, e) - self.target) > self.MOVED:
+        # The broom got there first: back off over the bin and go for the next block.
+        self.log.append(f"t={now:.1f}: the broom took {self.holding}; moving on")
+        self.queue.clear()
+        self.q, self.reaching, self.holding, self.stage = self.current.copy(), 0, None, "next"
+        self.rot = leaned((0.0, 1.0, 0.0))
+        self.glide(self.solve([b.BIN_XY[0], b.BIN_XY[1], b.Z + self.CARRY]), 1.4, 1.0)
     return super().act(env, e, now)
-
-  def _plan_through(self, spot: np.ndarray, choices: list[np.ndarray]) -> None:
-    """Carry the part to the near side of the opening, through it to the drop, let go, and come back out."""
-    before, low = self.through(spot), spot + [0, 0, 0.02]
-    ways = []
-    for rot in choices:
-      self.rot = rot
-      try:
-        q = self.solve(before)
-      except RuntimeError:
-        continue
-      ways.append((float(np.abs(q - self.q).max()), rot, q))
-    start_q, start_len = self.q.copy(), len(self.queue)
-    for _, rot, q in sorted(ways, key=lambda w: w[0]):
-      self.rot = rot
-      try:
-        self.glide(q, 2.0, 0.0)
-        self.line(before, low, 1.0, 0.0)
-        if self.place_settle:
-          self.hold(self.place_settle, 0.0)
-        mark = len(self.queue)
-        self.hold(0.4, 1.0)
-        self.line(low, before, 0.8, 1.0)
-        self.line(before, before + [0, 0, 0.08], 0.5, 1.0)  # Up, empty-handed, clear of what is on the table.
-      except RuntimeError:
-        del self.queue[start_len:]
-        self.q = start_q.copy()
-        continue
-      self.release_rows = len(self.queue) - mark
-      self.stage = "placed"
-      return
-    raise RuntimeError(f"no IK through to {np.round(spot, 3).tolist()}")
-
-  def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
-    if self.stage in ("wait", "backoff"):
-      if self.stage == "backoff":
-        self.start, self.stage = now + self.rng.uniform(*RETRY), "wait"
-        return
-      if now < self.start:
-        return
-      wanted = self.wanted(env, e)
-      if not wanted:
-        self.glide(READY_Q, 1.2, 1.0)
-        self.stage = "finishing"
-        return
-      other = site(env, self.other, GRASP_SITE, e)
-      free = [n for n in wanted if np.linalg.norm(pos(env, n, e)[:2] - other[:2]) > NEAR]
-      if self.busy(other) or not free:
-        self.start = now + self.rng.uniform(*RETRY)
-        return
-      # Nearest to this arm's side first.
-      self.target = max(free, key=lambda n: self.side * pos(env, n, e)[1])
-      self.grasp = pos(env, self.target, e) + [0.0, 0.0, self.grasp_height(self.target)]
-      jaw = self._jaw(env, e, self.target)
-      # Leaning about the jaw keeps the pads upright and square to the part; a turn of the jaw a quarter turn suits a
-      # cube or an upright cylinder as well, and may be within reach where the first is not.
-      flip = (-jaw[0], -jaw[1], 0.0)  # The same grip with the wrist turned half round.
-      options = [(jaw, LEAN), (jaw, 2 * LEAN), (flip, LEAN), (flip, 2 * LEAN), (jaw, 3 * LEAN), (flip, 3 * LEAN)]
-      if self.plumb_drop:  # Picked plumb, it is let go plumb without the wrist turning in between: a turn tilts it.
-        quarter = (-jaw[1], jaw[0], 0.0)
-        options = [(jaw, 0.0), (flip, 0.0), (quarter, 0.0), (tuple(-v for v in quarter), 0.0)] + options
-      if abs(self._long_axis(env, e, self.target)[2]) > 0.7 or self.target_square(self.target):
-        quarter = np.array([-jaw[1], jaw[0]])
-        if quarter[0] * self.side < 0 or (quarter[0] == 0 and quarter[1] < 0):
-          quarter = -quarter
-        options += [((float(quarter[0]), float(quarter[1]), 0.0), LEAN), ((float(quarter[0]), float(quarter[1]), 0.0), 2 * LEAN)]
-      for jaw, lean in options:
-        self.rot = self.lean_rot(jaw, self.grasp, lean)
-        try:
-          q = self.solve(self.grasp + [0, 0, self.approach])
-          self.solve(self.grasp)
-        except RuntimeError:
-          continue
-        self.jaw, self.lean = jaw, lean
-        if self.via_ready and self.placed:
-          self.glide(READY_Q, 1.0, self.opening)
-        self.glide(q, 1.2, self.opening)
-        self.stage = "approach"
-        return
-      self.log.append(f"t={now:.1f}: cannot reach {self.target}")
-      self.start, self.target = now + self.rng.uniform(*RETRY), None
-    elif self.stage == "approach":
-      self.line(self.grasp + [0, 0, self.approach], self.grasp, 0.8, self.opening)
-      self.hold(SETTLE, self.opening)  # The arm lags its targets: let it get all the way down before closing.
-      self.hold(0.6, 0.0)
-      self.line(self.grasp, self.grasp + [0, 0, self.approach], 0.6, 0.0)
-      self.stage = "lifted"
-    elif self.stage == "lifted":
-      if not self.holding(env, e):
-        self.log.append(f"t={now:.1f}: missed {self.target} at {np.round(pos(env, self.target, e), 3).tolist()}, hand at {np.round(site(env, self.arm, GRASP_SITE, e), 3).tolist()}")
-        self.glide(READY_Q, 1.0, 1.0)
-        self.stage, self.target = "backoff", None
-        return
-      spot = self.spot = self.drop(env, e, self.target)
-      if self.drop_busy(site(env, self.other, GRASP_SITE, e), spot):
-        self.hold(self.rng.uniform(*RETRY), 0.0)  # Wait, holding the part where it is, and look again.
-        return
-      self.lift_q, self.lift_rot = self.q.copy(), self.rot
-      here = site(env, self.arm, GRASP_SITE, e)
-      # Carry it the way it was picked if that reaches the drop, else whichever lean does with the least turn of the
-      # joints: a big swing of the wrist on the way flings the part out of the fingers.  As high as it reaches.
-      flip = (-self.jaw[0], -self.jaw[1], 0.0)
-      # Held, the part turns with the hand: past the grip it was picked with, any turn of the wrist will do, and over a
-      # far drop only a quarter of the turns are within reach.
-      turns = [] if self.keep_jaw else [np.radians(a) for a in (90, -90, 45, -45, 135, -135)]
-      jaws = [self.jaw, flip] + [(self.jaw[0] * np.cos(a) - self.jaw[1] * np.sin(a),
-                                  self.jaw[0] * np.sin(a) + self.jaw[1] * np.cos(a), 0.0) for a in turns]
-      choices = [self.rot] + [self.lean_rot(jaw, spot, lean) for jaw in jaws for lean in (LEAN, 2 * LEAN, 0.0, 3 * LEAN)]
-      if self.through is not None:
-        self._plan_through(spot, choices)
-        return
-      top = max(here[2], 0.75 + self.carry)
-      ways = []  # (swing, height, rotation, joints at the top): from the highest height any of them reaches.
-      heights = np.arange(top, spot[2] + 0.019, -0.02)
-      for z in heights:
-        for rot in choices:
-          self.rot = rot
-          try:
-            q = self.solve(np.r_[spot[:2], z])
-          except RuntimeError:
-            continue
-          ways.append((float(np.abs(q - self.q).max()), z, rot, q))
-        if ways:
-          break
-      # ``plumb_drop``: having carried it high, turn the fingers straight down just over the drop, then lower.  Only the
-      # few plumb turns of the wrist are tried there: a failed solve is slow.
-      plumbs = [self.lean_rot(jaw, spot, 0.0) for jaw in jaws] if self.plumb_drop else []
-      hover = spot + [0, 0, 0.05]
-      # The solver starts from random guesses, and near the edge of reach a pose found once may not be found again on
-      # the way down: build the whole move for each way, least swing first, and take the first that holds together.
-      start_q, start_len = self.q.copy(), len(self.queue)
-      for _, z, rot, q in sorted(ways, key=lambda w: w[0]):
-        high = np.r_[spot[:2], z]
-        self.rot = rot
-        try:
-          self.glide(q, 2.0, 0.0)
-          if plumbs:
-            for plumb_rot in plumbs:
-              self.rot = plumb_rot
-              try:
-                q_hover = self.solve(hover)
-                break
-              except RuntimeError:
-                continue
-            else:
-              raise RuntimeError("no plumb pose over the drop")
-            self.glide(q_hover, 1.0, 0.0)
-            high = hover
-          after_glide, q_high = len(self.queue), self.q.copy()
-          self.line(high, spot + [0, 0, 0.02], 0.6, 0.0)
-          if self.place_settle:
-            self.hold(self.place_settle, 0.0)
-          before = len(self.queue)
-          self.hold(0.4, 1.0)
-          self.line(spot + [0, 0, 0.02], high, 0.5, 1.0)
-        except RuntimeError:
-          del self.queue[start_len:]
-          self.q = start_q.copy()
-          continue
-        self.release_rows = len(self.queue) - before  # Once it starts letting go, it no longer turns back.
-        self.stage = "placed"
-        if self.correct:  # Only as far as over the drop; the rest is planned there, from where the part sits.
-          del self.queue[after_glide:]
-          self.q, self.high, self.stage = q_high, high, "over"
-        return
-      raise RuntimeError(f"no IK at {np.round(np.r_[spot[:2], top], 3).tolist()}")
-    elif self.stage == "over":
-      if not self.holding(env, e):
-        self.log.append(f"t={now:.1f}: dropped {self.target} on the way")
-        self.glide(READY_Q, 1.0, 1.0)
-        self.stage, self.target = "backoff", None
-        return
-      if self.drop_busy(site(env, self.other, GRASP_SITE, e), self.spot):  # Theirs now: back to where it lifted.
-        self.rot = self.lift_rot
-        self.glide(self.lift_q, 1.0, 0.0)
-        self.stage, self.backoffs = "lifted", self.backoffs + 1
-        return
-      # Where the part sits in the hand now, height too: it may have slipped since it was picked up.  The drop spot
-      # was planned for the part held at its grasp height.
-      offset = pos(env, self.target, e) - site(env, self.arm, GRASP_SITE, e)
-      planned = np.array([0.0, 0.0, -self.grasp_height(self.target)])
-      start_q, start_len = self.q.copy(), len(self.queue)
-      for shift in (offset - planned, np.zeros(3)):
-        low = self.spot + [0, 0, 0.02] - shift
-        try:
-          self.line(self.high, low, 0.8, 0.0)
-          if self.place_settle:
-            self.hold(self.place_settle, 0.0)
-          before = len(self.queue)
-          self.hold(0.4, 1.0)
-          self.line(low, self.high, 0.5, 1.0)
-        except RuntimeError:
-          del self.queue[start_len:]
-          self.q = start_q.copy()
-          continue
-        self.release_rows = len(self.queue) - before
-        self.stage = "placed"
-        return
-      raise RuntimeError(f"no IK down to {np.round(self.spot, 3).tolist()}")
-    elif self.stage == "placed":
-      off = np.linalg.norm(pos(env, self.target, e)[:2] - self.spot[:2])
-      self.placed.append(self.target)
-      self.log.append(f"t={now:.1f}: put {self.target} down" + ("" if off < 0.05 else f", {off:.2f} m from where meant"))
-      self.target = None
-      self.stage = "wait"
-      self.start = now
-    elif self.stage == "finishing":
-      self.stage = "done"
-
-
-# The fixed routine the second arm runs.
-
-@dataclass
-class Job:
-  pick: np.ndarray
-  """The part's middle, where it lies."""
-  place: np.ndarray
-  """The part's middle, where it is let go."""
-  at: float = 0.0
-  """Seconds from the start of the trial before which this job does not start."""
-
-
-def lean_rot(arm: str, jaw, point, lean: float) -> np.ndarray:
-  """Fingers down, the jaw along ``jaw``, leaning ``lean`` degrees about the jaw, the fingertips away from the base."""
-  radial = np.asarray(point[:2]) - np.array(BASE_POSE[arm][0][:2])
-  best = None
-  for sign in (1.0, -1.0):
-    rot = turn(jaw, sign * lean) @ plumb(jaw)
-    score = float(rot[:2, 2] @ radial)
-    if best is None or score > best[0]:
-      best = (score, rot)
-  return best[1]
-
-
-class Routine(Mover):
-  GRIP = 0.003
-  """The grasp site this far over the part's middle."""
-  APPROACH = 0.10
-  CARRY = 0.12
-  """Height over the table it carries parts at."""
-
-  def __init__(self, arm: str, dt: float, jobs: list[Job], start: float = 0.0, end_at_ready: bool = True) -> None:
-    super().__init__(arm, ArmIk(), np.random.default_rng(0), dt)
-    self.jobs, self.t0 = jobs, start
-    self.timeline: list[tuple[float, str]] = []
-    self._build(end_at_ready)
-    self.stage = "running"
-
-  def _rot_for(self, *points) -> np.ndarray:
-    """A grip, across x, that reaches every point given: the least lean that does."""
-    for jaw in ((self.side, 0.0, 0.0), (-self.side, 0.0, 0.0)):
-      for lean in (LEAN, 2 * LEAN, 0.0, 3 * LEAN):
-        self.rot = lean_rot(self.arm, jaw, points[0], lean)
-        try:
-          for p in points:
-            self.solve(p)
-        except RuntimeError:
-          continue
-        return self.rot
-    raise RuntimeError(f"no grip reaches {np.round(points[0], 3).tolist()}")
-
-  def _wait_until(self, t: float) -> None:
-    now = len(self.queue) * self.dt
-    if t > now:
-      self.hold(t - now, 1.0)
-
-  def _build(self, end_at_ready: bool) -> None:
-    self._wait_until(self.t0)
-    for k, job in enumerate(self.jobs):
-      self._wait_until(job.at)
-      grasp = job.pick + [0, 0, self.GRIP]
-      above = grasp + [0, 0, self.APPROACH]
-      place = job.place + [0, 0, self.GRIP]
-      high = np.r_[place[:2], max(place[2] + 0.04, 0.75 + self.CARRY)]
-      self.rot = self._rot_for(above, grasp)
-      self.timeline.append((len(self.queue) * self.dt, f"to job {k}"))
-      self.glide(self.solve(above), 1.4, OPEN)
-      self.line(above, grasp, 0.8, OPEN)
-      self.hold(SETTLE, OPEN)
-      self.hold(0.6, 0.0)
-      self.line(grasp, above, 0.6, 0.0)
-      self.timeline.append((len(self.queue) * self.dt, f"lifted job {k}"))
-      self.rot = self._rot_for(high, place)
-      self.glide(self.solve(high), 1.6, 0.0)
-      self.line(high, place, 0.6, 0.0)
-      self.hold(0.4, 1.0)
-      self.line(place, high, 0.5, 1.0)
-      self.timeline.append((len(self.queue) * self.dt, f"placed job {k}"))
-    if end_at_ready:
-      self.glide(READY_Q, 1.2, 1.0)
-    self.timeline.append((len(self.queue) * self.dt, "done"))
-
-  def plan(self, env: ManagerBasedRlEnv, e: int, now: float) -> None:
-    self.stage = "done"  # The whole routine was queued at the start: when it runs out, it is over.
-
-
-@dataclass
-class Push:
-  start: np.ndarray
-  """Where the grasp site goes down, closed, behind what it pushes."""
-  end: np.ndarray
-  """Where it stops and lifts out."""
-  at: float = 0.0
-  speed: float | None = None
-  """Metres a second along the lane; the routine's own if not given."""
-
-
-class PushRoutine(Routine):
-  """A fixed routine of pushes: closed fingers down behind a lane, along it at an even speed, and up again; whatever is
-  in the lane goes with it, and an empty lane is swept all the same."""
-
-  SPEED = 0.10
-  LIFT = 0.05
-
-  def _build(self, end_at_ready: bool) -> None:
-    self._wait_until(self.t0)
-    for k, job in enumerate(self.jobs):
-      self._wait_until(job.at)
-      above, over = job.start + [0, 0, self.LIFT], job.end + [0, 0, self.LIFT]
-      self.rot = self._rot_for(above, job.start, job.end, over)
-      self.timeline.append((len(self.queue) * self.dt, f"to lane {k}"))
-      self.glide(self.solve(above), 1.2, 0.0)
-      self.line(above, job.start, 0.6, 0.0)
-      self.line(job.start, job.end, float(np.linalg.norm(job.end - job.start)) / (job.speed or self.SPEED), 0.0)
-      self.line(job.end, over, 0.5, 0.0)
-      self.timeline.append((len(self.queue) * self.dt, f"swept lane {k}"))
-    if end_at_ready:
-      self.glide(READY_Q, 1.2, 1.0)
-    self.timeline.append((len(self.queue) * self.dt, "done"))
-
-
-# This task's two scripts.
-
-def _rescue_worker(arm: str, ik, rng, dt) -> PushRoutine:
-  """Sweeps every lane of the clutter onto its patch on the dot, one lane every period, whatever is in it."""
-  jobs = [Push(*b.lane_push(n), at=b.LANE_START_S + b.LANE_PERIOD_S * k) for k, n in enumerate(b.LANES)]
-  return PushRoutine(arm, dt, jobs)
-
-
-def _rescue_helper(arm: str, ik, rng, dt) -> Picker:
-  """The demonstration's helper: takes the red blocks still in the clutter, the one whose lane is swept soonest first,
-  waiting while the worker's hand is near it."""
-  reds = [n for n in b.LANES if n.startswith("red")]
-  centre, half = np.array(b.RESCUE_CLUTTER_XY), np.array(b.RESCUE_CLUTTER_INNER) / 2
-  urgent = {"at": None}
-
-  def wanted(env, e):
-    left = [n for n in reds if (np.abs(pos(env, n, e)[:2] - centre) < half + 0.02).all()]
-    urgent["at"] = pos(env, left[0], e) if left else None
-    return left[:1]
-
-  def drop(env, e, name):
-    return b.rescue_bin_slot(reds.index(name))
-
-  def busy(other_site):
-    """The worker's hand is low near the block it wants next; or, by its timetable, the worker will reach across a lane
-    near that block before the block could be lifted out."""
-    at, now = urgent["at"], clock["now"]
-    if at is None:
-      return False
-    if np.linalg.norm(other_site[:2] - at[:2]) < 0.12 and other_site[2] < b.Z + 0.15:
-      return True
-    for k, x in enumerate(b.LANES.values()):
-      t0 = b.LANE_START_S + b.LANE_PERIOD_S * k
-      if abs(x - at[0]) < RESCUE_NEAR and now + RESCUE_PICK_S > t0 + RESCUE_DEEP[0] and now < t0 + RESCUE_DEEP[1]:
-        return True
-    return False
-
-  picker = Picker(arm, ik, rng, dt, wanted, drop, busy, grasp_height=lambda name: 0.003)
-  picker.start = 0.0
-  clock = {"now": 0.0}
-  act = picker.act
-
-  def timed_act(env, e, now):
-    clock["now"] = now
-    return act(env, e, now)
-
-  picker.act = timed_act
-  return picker
-RESCUE_NEAR = 0.13
-"""Lanes this close, across the table, to a block are too close to reach in for it while the worker sweeps them."""
-RESCUE_PICK_S = 4.5
-"""Seconds from setting off for a block to having it lifted clear."""
-RESCUE_DEEP = (0.3, 3.0)
-"""Seconds from the start of a lane's sweep that the worker's arm is across the clutter, on the helper's side."""
-
-
-Worker = _rescue_worker
-"""The second arm."""
-Helper = _rescue_helper
-"""The demonstration, on the controlled arm."""
