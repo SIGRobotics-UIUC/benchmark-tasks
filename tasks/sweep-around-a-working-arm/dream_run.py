@@ -101,7 +101,8 @@ def main() -> None:
   args.out.mkdir(parents=True, exist_ok=True)
   client = dream.DreamClient()
   client.policy({"checkpoint": args.model, "timeout_ms": 45000, "strict": False, "action_hz": 20, "_record": False})
-  steps, requests, rtts, rows_run = 0, 0, [], 0
+  steps, requests, rtts, rows_run, retries = 0, 0, [], 0, 0
+  finished = False
   film = [view.render()]
   try:
     feed(client, env, windows, steps, all_frames=True)
@@ -111,12 +112,24 @@ def main() -> None:
         reply = client.get_action()
       except Exception as error:
         if type(error).__name__ == "DreamSessionExpired":
-          feed(client, env, windows, steps, all_frames=True)
+          # The model replaced an idle session; the client has adopted the new one and keeps the frames it was sent,
+          # so asking again continues on it (re-sending older frames would go back in time and be refused).
+          print(f"session replaced at step {env.steps}: {error}", flush=True)
+          continue
+        if type(error).__name__ in ("DreamProtocolError", "DreamTimeout") and retries < 3:
+          # A dropped connection or a slow answer: asking again is safe.
+          retries += 1
+          print(f"retry {retries} at step {env.steps}: {error}", flush=True)
+          time.sleep(2.0 * retries)
           continue
         raise
+      retries = 0
       rtts.append(time.monotonic() - started)
       requests += 1
       left = np.asarray(reply["q_l_chunk"], dtype=float)
+      with open(args.out / "actions.jsonl", "a") as log:  # Every chunk, so a run can be replayed offline.
+        log.write(json.dumps({"request": requests, "step": env.steps, "q_l_chunk": left.tolist()}) + "\n")
+      sim_started = time.monotonic()
       if left.ndim != 2 or left.shape[1] != 7 or not np.isfinite(left).all():
         raise ValueError(f"unexpected left chunk shape {left.shape}")
       for row in left[:args.actions]:
@@ -133,14 +146,17 @@ def main() -> None:
           for name, rgb in station.images().items():
             windows[name].append(jpeg(rgb))
           feed(client, env, windows, steps)
-      print(f"request {requests}: {rtts[-1]:.2f} s, {rows_run} rows run, step {env.steps}", flush=True)
+      print(f"request {requests}: {rtts[-1]:.2f} s, {rows_run} rows run, step {env.steps}, "
+            f"simulated in {time.monotonic() - sim_started:.1f} s", flush=True)
+    finished = True
   finally:
     client.close()
-  result = {**env.score(), "model": args.model, "requests": requests, "rows_per_request": args.actions,
-            "mean_rtt_s": round(float(np.mean(rtts)), 2) if rtts else None}
-  mediapy.write_video(args.out / "dream_run.mp4", film, fps=10, codec="h264")
-  (args.out / "score.json").write_text(json.dumps(result, indent=2))
-  print(json.dumps(result))
+    # Written even if the run failed, marked incomplete, so nothing already run is lost.
+    result = {**env.score(), "model": args.model, "requests": requests, "rows_per_request": args.actions,
+              "mean_rtt_s": round(float(np.mean(rtts)), 2) if rtts else None, "complete": finished}
+    mediapy.write_video(args.out / "dream_run.mp4", film, fps=10, codec="h264")
+    (args.out / "score.json").write_text(json.dumps(result, indent=2))
+    print(json.dumps(result))
 
 
 if __name__ == "__main__":

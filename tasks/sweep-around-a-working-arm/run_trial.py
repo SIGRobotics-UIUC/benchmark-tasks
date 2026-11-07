@@ -19,7 +19,7 @@ import mediapy
 import numpy as np
 
 from cameras import Overview
-from sim.partner import Helper
+from sim.partner import Sweeper
 from sim.scene import LEFT_ARM
 from task_env import CONTROL_HZ, READY, TaskEnv
 
@@ -34,13 +34,15 @@ class Hold:
 
 
 class Demo:
-  """The demonstration: the scripted Helper of ``sim/partner.py`` driving the controlled arm at 20 Hz.  Unlike a
-  policy it reads the simulator's true state (where everything on the table and the other arm are), not the cameras: it
-  shows that the task can be done with this arm in this scene."""
+  """The demonstration: the scripted Sweeper of ``sim/partner.py`` driving the controlled arm at 20 Hz.  Unlike a
+  policy it reads the simulator's true state (where the clutter, the blocks and the other arm are), not the cameras:
+  it shows that the task can be done with this arm in this scene."""
 
   def __init__(self, env: TaskEnv) -> None:
     self.env = env
-    self.arm = Helper(LEFT_ARM, env.ik, np.random.default_rng(DEMO_SEED), env.dt)
+    self.arm = Sweeper(LEFT_ARM, env.ik, np.random.default_rng(DEMO_SEED), env.dt)
+    self.arm.picker = env.partner
+    env.finished = lambda: self.arm.stage == "done" and not self.arm.queue  # Run on until the broom is put back.
 
   def act(self, obs):
     return self.arm.act(self.env.env, 0, self.env.steps * self.env.dt)
@@ -69,6 +71,8 @@ def main() -> None:
     obs = env.step(policy.act(obs))
     if args.video and env.steps % 2 == 0:
       frames.append(view.render())
+  if args.policy == "demo":
+    print("\n".join(["sweeper:", *policy.arm.log, "picker:", *env.partner.log]))
   if args.video:
     mediapy.write_video(args.video, frames, fps=CONTROL_HZ / 2, codec="h264")
   print(json.dumps(env.score()))
