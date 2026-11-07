@@ -46,6 +46,8 @@ moves the same way in every trial.
 - 0 if your arm or the broom touches the other arm or the block it's holding. The trial stops at the first touch.
 - The trial ends at 600 steps, or earlier once all the clutter is past the line and the other arm has finished.
 
+In real trials, an operator stands by to stop both arms at the first touch.
+
 ## The second arm
 
 `Picker` in `sim/partner.py`. It waits 2 s, then reaches for each red block's starting spot in turn and drops it in
