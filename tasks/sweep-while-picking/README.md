@@ -45,7 +45,8 @@ moves the same way in every trial.
   work area, not the tool.
 - Red blocks don't count either way: binned by the other arm, left on the table or swept off, they neither earn nor
   cost you anything.
-- 0 if your arm or the broom touches the other arm or the block it's holding. The trial stops at the first touch.
+- 0 if your arm or the broom touches the other arm or the block it's holding (within 3 cm of its grasp point). The
+  trial stops at the first touch.
 - The trial ends at 600 steps, or earlier once all the clutter is past the line and the other arm has finished.
 
 In real trials, an operator stands by to stop both arms at the first touch.
