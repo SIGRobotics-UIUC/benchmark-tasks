@@ -1,14 +1,11 @@
-"""The scene: Clutter in five lanes across the middle of the table, three red blocks on the controlled arm's side of it and two white scraps on the second arm's; a grey patch painted on the second arm's side and the controlled arm's bin on its own, and what the arms sense and do."""
+"""The scene: red blocks and clutter scattered over the table, the controlled arm's bin in its back corner, Arm 1's hand
+broom on Arm 1's side, and what the arms sense and do.  The layout of sweep-while-picking, mirrored left to right."""
 
 from __future__ import annotations
 
-import math
-
-import numpy as np
 import torch
 
-from mjlab.actuator import BuiltinPositionActuatorCfg
-from mjlab.entity import EntityArticulationInfoCfg, EntityCfg
+from mjlab.entity import EntityCfg
 from mjlab.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.envs import mdp as envs_mdp
 from mjlab.managers.event_manager import EventTermCfg
@@ -24,8 +21,8 @@ from mjlab.viewer import ViewerConfig
 
 from sim import props
 from sim.env_cfg import DECIMATION, PHYSICS_DT, READY_JOINTS, arm_actions
-from sim.robot import FINGER_MAX, GRASP_SITE
-from sim.scene import LEFT_ARM, RIGHT_ARM, TABLE_CENTER_X, TABLE_TOP, make_rig
+from sim.robot import GRASP_SITE
+from sim.scene import LEFT_ARM, RIGHT_ARM, TABLE_TOP, make_rig
 
 Z = TABLE_TOP
 ARMS = (LEFT_ARM, RIGHT_ARM)
@@ -125,51 +122,46 @@ def _make_cfg(
     decimation=DECIMATION,
     episode_length_s=episode_length_s,
   )
-WORKER = RIGHT_ARM
-"""The arm with the fixed routine."""
-HELPER = LEFT_ARM
-"""The arm tested."""
-BOX_INNER = (0.16, 0.18)
-LANES = {"red_1": 0.22, "scrap_1": 0.28, "red_2": 0.34, "scrap_2": 0.40, "red_3": 0.46}
-"""Each piece lies in a lane of its own across the table, at this x: the worker sweeps the lanes in this order."""
-LANE_Y = {"red": 0.05, "scrap": -0.02}
-"""The red blocks lie on the helper's side of the clutter, the rubbish on the worker's."""
-LANE_START_S = 12.0
-LANE_PERIOD_S = 10.0
-"""The worker sweeps lane k from this time on: ``LANE_START_S + LANE_PERIOD_S * k``."""
-RESCUE_BIN_XY = (0.33, 0.30)
-"""The helper's bin, on its side."""
-DUST_ZONE_XY = (0.34, -0.24)
-"""Where the worker sweeps to: a patch on its own side."""
-DUST_ZONE_INNER = (0.36, 0.14)
-RESCUE_CLUTTER_XY = (0.34, 0.015)
-RESCUE_CLUTTER_INNER = (0.34, 0.17)
-SWEEP_BEHIND = 0.045
-"""The worker's hand goes down this far behind a lane's piece, on the helper's side of it."""
+
+BIN_XY = (0.16, 0.34)
+"""The controlled arm's bin, in its back corner of the table."""
+BROOM_XY = (0.22, -0.36)
+"""Arm 1's broom, standing on its bristles, its length along x, on Arm 1's side."""
+RED_BLOCKS = ((0.20, -0.10), (0.32, -0.10), (0.40, 0.02), (0.15, 0.02))
+"""The four red blocks, all inside the area Arm 1 sweeps."""
+CLUTTER = (
+  ("ball", 0.15, -0.21), ("paper", 0.18, -0.27), ("box", 0.26, -0.24),
+  ("ball", 0.36, -0.20), ("box", 0.44, -0.12), ("cube", 0.42, -0.34),
+)
+"""The six clutter items, (kind, x, y): two in each 20 cm band the broom covers, so no single stroke clears them."""
+CLUTTER_NAMES = tuple(f"clutter_{i}" for i in range(len(CLUTTER)))
+BLOCK_NAMES = tuple(f"red_block_{i}" for i in range(len(RED_BLOCKS)))
 
 
-def lane_xyz(name: str) -> np.ndarray:
-  kind = "red" if name.startswith("red") else "paper"
-  return np.array([LANES[name], LANE_Y[name.split("_")[0]], Z + props.part_half_height(kind) + 0.001])
+def _contact(name: str, primary: tuple[str, str], secondary: tuple[str, str]) -> ContactSensorCfg:
+  return ContactSensorCfg(
+    name=name,
+    primary=ContactMatch(mode="subtree", pattern=primary[1], entity=primary[0]),
+    secondary=ContactMatch(mode="subtree", pattern=secondary[1], entity=secondary[0]),
+    fields=("found",),
+    reduce="netforce",
+  )
 
 
-def lane_push(name: str) -> tuple[np.ndarray, np.ndarray]:
-  """Where the worker's hand goes down in ``name``'s lane, and where it stops: the piece's middle at the patch's."""
-  p = lane_xyz(name)
-  start = np.array([p[0], p[1] + SWEEP_BEHIND, Z + 0.016])
-  return start, np.array([p[0], DUST_ZONE_XY[1] + SWEEP_BEHIND, Z + 0.016])
-
-
-def rescue_bin_slot(k: int) -> np.ndarray:
-  return np.array([RESCUE_BIN_XY[0], RESCUE_BIN_XY[1] - 0.05 + 0.05 * k, Z + 0.004 + 0.015 + 0.012])
-
-
-def make_rescue_cfg(num_envs: int = 1) -> ManagerBasedRlEnvCfg:
+def make_pick_cfg(picker: str = LEFT_ARM, num_envs: int = 1) -> ManagerBasedRlEnvCfg:
+  sweeper = RIGHT_ARM if picker == LEFT_ARM else LEFT_ARM
   entities = make_rig(READY_JOINTS)
-  entities["dust_zone"] = _place(lambda: props.zone_spec("dust_zone", DUST_ZONE_INNER, (0.6, 0.6, 0.62, 1.0)), *DUST_ZONE_XY)
-  entities["bin"] = _place(lambda: props.tray_spec("bin", BOX_INNER, (0.55, 0.42, 0.28, 1.0)), *RESCUE_BIN_XY)
-  for name in LANES:
-    p = lane_xyz(name)
-    kind = "red" if name.startswith("red") else "paper"
-    entities[name] = _place(lambda name=name, kind=kind: props.part_spec(name, kind), p[0], p[1], p[2] - Z)
-  return _make_cfg(entities, tuple(LANES), {}, 75.0, num_envs, nconmax=400, njmax=2000)
+  entities["bin"] = _place(props.bin_spec, *BIN_XY)
+  entities["broom"] = _place(props.broom_spec, *BROOM_XY, 0.001)
+  for name, (x, y) in zip(BLOCK_NAMES, RED_BLOCKS):
+    entities[name] = _place(props.red_block_spec, x, y, props.BLOCK / 2 + 0.001)
+  for name, (kind, x, y) in zip(CLUTTER_NAMES, CLUTTER):
+    entities[name] = _place(lambda kind=kind: props.clutter_spec(kind), x, y, props.clutter_half_height(kind) + 0.001)
+  cfg = _make_cfg(entities, ("broom",), {}, 200.0, num_envs, nconmax=600, njmax=3000)
+  sensors = [_contact("broom_picker_contact", ("broom", "broom"), (picker, "arm"))]
+  # A red block in the controlled arm's hand counts as part of it: touching Arm 1 or its broom with it is contact.
+  for name in BLOCK_NAMES:
+    sensors.append(_contact(f"{name}_sweeper_contact", (name, "red_block"), (sweeper, "arm")))
+    sensors.append(_contact(f"{name}_broom_contact", (name, "red_block"), ("broom", "broom")))
+  cfg.scene.sensors = (*cfg.scene.sensors, *sensors)
+  return cfg
