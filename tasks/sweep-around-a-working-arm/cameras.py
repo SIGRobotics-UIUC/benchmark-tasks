@@ -66,8 +66,8 @@ class Overview:
     self.renderer = mujoco.Renderer(self.cameras.model, height=height, width=width)
     self.camera = mujoco.MjvCamera()
     self.camera.type = mujoco.mjtCamera.mjCAMERA_FREE
-    self.camera.lookat[:] = (0.28, 0.0, 0.78)
-    self.camera.distance, self.camera.azimuth, self.camera.elevation = 1.45, 180.0, -50.0
+    self.camera.lookat[:] = (0.24, 0.0, 0.84)
+    self.camera.distance, self.camera.azimuth, self.camera.elevation = 1.45, 180.0, -38.0
 
   def render(self) -> np.ndarray:
     self.cameras.sync()
